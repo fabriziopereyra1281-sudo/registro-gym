@@ -1,0 +1,8 @@
+{
+  "name": "Registro de Gimnasio",
+  "short_name": "Gym",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1B1F24",
+  "theme_color": "#1B1F24"
+}
