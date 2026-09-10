@@ -17,52 +17,52 @@ function defaultTemplate() {
       focus: "Espalda y tríceps",
       note: "",
       exercises: [
-        { id: uid(), name: "Dominadas (+lastre)", unilateral: false },
-        { id: uid(), name: "Remo con barra", unilateral: false },
-        { id: uid(), name: "Jalón al pecho", unilateral: false },
-        { id: uid(), name: "Extensión de tríceps (polea)", unilateral: false },
-        { id: uid(), name: "Press francés", unilateral: false },
+        { id: uid(), name: "Dominadas (+lastre)", unilateral: false, sets: "", reps: "" },
+        { id: uid(), name: "Remo con barra", unilateral: false, sets: "", reps: "" },
+        { id: uid(), name: "Jalón al pecho", unilateral: false, sets: "", reps: "" },
+        { id: uid(), name: "Extensión de tríceps (polea)", unilateral: false, sets: "", reps: "" },
+        { id: uid(), name: "Press francés", unilateral: false, sets: "", reps: "" },
       ],
     },
     mar: {
       focus: "Pecho y bíceps",
       note: "",
       exercises: [
-        { id: uid(), name: "Press de banca", unilateral: false },
-        { id: uid(), name: "Press inclinado con mancuernas", unilateral: false },
-        { id: uid(), name: "Aperturas con mancuernas", unilateral: false },
-        { id: uid(), name: "Curl con barra", unilateral: false },
-        { id: uid(), name: "Curl martillo", unilateral: false },
+        { id: uid(), name: "Press de banca", unilateral: false, sets: "", reps: "" },
+        { id: uid(), name: "Press inclinado con mancuernas", unilateral: false, sets: "", reps: "" },
+        { id: uid(), name: "Aperturas con mancuernas", unilateral: false, sets: "", reps: "" },
+        { id: uid(), name: "Curl con barra", unilateral: false, sets: "", reps: "" },
+        { id: uid(), name: "Curl martillo", unilateral: false, sets: "", reps: "" },
       ],
     },
     mie: {
       focus: "Hombros y femorales",
       note: "",
       exercises: [
-        { id: uid(), name: "Press militar", unilateral: false },
-        { id: uid(), name: "Elevaciones laterales", unilateral: false },
-        { id: uid(), name: "Peso muerto rumano", unilateral: false },
-        { id: uid(), name: "Curl femoral acostado", unilateral: false },
+        { id: uid(), name: "Press militar", unilateral: false, sets: "", reps: "" },
+        { id: uid(), name: "Elevaciones laterales", unilateral: false, sets: "", reps: "" },
+        { id: uid(), name: "Peso muerto rumano", unilateral: false, sets: "", reps: "" },
+        { id: uid(), name: "Curl femoral acostado", unilateral: false, sets: "", reps: "" },
       ],
     },
     jue: {
       focus: "Brazos (bíceps y tríceps)",
       note: "Foco extra en el brazo derecho — trabajo unilateral",
       exercises: [
-        { id: uid(), name: "Curl con mancuerna", unilateral: true },
-        { id: uid(), name: "Extensión de tríceps con mancuerna", unilateral: true },
-        { id: uid(), name: "Curl martillo", unilateral: true },
-        { id: uid(), name: "Press francés / fondos en banco", unilateral: false },
+        { id: uid(), name: "Curl con mancuerna", unilateral: true, sets: "", reps: "" },
+        { id: uid(), name: "Extensión de tríceps con mancuerna", unilateral: true, sets: "", reps: "" },
+        { id: uid(), name: "Curl martillo", unilateral: true, sets: "", reps: "" },
+        { id: uid(), name: "Press francés / fondos en banco", unilateral: false, sets: "", reps: "" },
       ],
     },
     vie: {
       focus: "Cuádriceps y pantorrilla",
       note: "",
       exercises: [
-        { id: uid(), name: "Sentadilla", unilateral: false },
-        { id: uid(), name: "Prensa", unilateral: false },
-        { id: uid(), name: "Extensión de cuádriceps", unilateral: false },
-        { id: uid(), name: "Elevación de pantorrilla", unilateral: false },
+        { id: uid(), name: "Sentadilla", unilateral: false, sets: "", reps: "" },
+        { id: uid(), name: "Prensa", unilateral: false, sets: "", reps: "" },
+        { id: uid(), name: "Extensión de cuádriceps", unilateral: false, sets: "", reps: "" },
+        { id: uid(), name: "Elevación de pantorrilla", unilateral: false, sets: "", reps: "" },
       ],
     },
   };
@@ -92,6 +92,40 @@ function fmtShort(iso) {
 }
 function uid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36) + Math.floor(Math.random() * 1000);
+}
+
+// Numeros con decimales: se acepta coma o punto indistintamente ("82,5" y "82.5").
+function sanitizeDecimal(v) {
+  let s = String(v ?? "").replace(/[^\d.,]/g, "");
+  const sep = s.search(/[.,]/);
+  if (sep !== -1) s = s.slice(0, sep + 1) + s.slice(sep + 1).replace(/[.,]/g, "");
+  return s;
+}
+function sanitizeInt(v) {
+  return String(v ?? "").replace(/\D/g, "");
+}
+function toNum(v) {
+  if (v === null || v === undefined) return null;
+  const s = String(v).trim().replace(",", ".");
+  if (s === "" || s === ".") return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+function fmtNum(n) {
+  if (n === null || n === undefined || n === "") return "\u2013";
+  return String(Number(n)).replace(".", ",");
+}
+function toInput(n) {
+  if (n === null || n === undefined) return "";
+  return String(n).replace(".", ",");
+}
+function targetText(ex) {
+  const sets = String(ex.sets ?? "").trim();
+  const reps = String(ex.reps ?? "").trim();
+  if (sets && reps) return `${sets} \u00d7 ${reps}`;
+  if (sets) return `${sets} series`;
+  if (reps) return `${reps} reps`;
+  return "";
 }
 
 function mapLogRow(row) {
@@ -199,6 +233,22 @@ export default function App() {
     }
   }
 
+  async function updateLog(id, patch) {
+    const row = {
+      weight: patch.weight ?? null,
+      reps: patch.reps ?? null,
+      weight_r: patch.weightR ?? null,
+      reps_r: patch.repsR ?? null,
+      weight_l: patch.weightL ?? null,
+      reps_l: patch.repsL ?? null,
+    };
+    const { data, error } = await supabase.from("workout_logs").update(row).eq("id", id).select().single();
+    if (!error && data) {
+      setLogs((prev) => prev.map((l) => (l.id === id ? mapLogRow(data) : l)));
+      showToast("Registro actualizado");
+    }
+  }
+
   async function deleteLog(id) {
     await supabase.from("workout_logs").delete().eq("id", id);
     setLogs((prev) => prev.filter((l) => l.id !== id));
@@ -225,7 +275,7 @@ export default function App() {
     persistConfig({ ...config, [dayKey]: { ...config[dayKey], note: text } });
   }
   function addExercise(dayKey) {
-    const ex = { id: uid(), name: "Nuevo ejercicio", unilateral: false };
+    const ex = { id: uid(), name: "Nuevo ejercicio", unilateral: false, sets: "", reps: "" };
     persistConfig({ ...config, [dayKey]: { ...config[dayKey], exercises: [...config[dayKey].exercises, ex] } });
   }
   function updateExercise(dayKey, exId, patch) {
@@ -304,7 +354,7 @@ export default function App() {
           ) : tab === "progreso" ? (
             <ProgresoTab logs={logs} bwLogs={bwLogs} addBw={addBw} config={config} allExercises={allExercises} />
           ) : (
-            <HistorialTab logs={logs} deleteLog={deleteLog} />
+            <HistorialTab logs={logs} deleteLog={deleteLog} updateLog={updateLog} />
           )}
         </main>
 
@@ -401,6 +451,22 @@ function TabBtn({ icon, label, active, onClick }) {
   );
 }
 
+// Input numerico en texto plano: evita que el navegador descarte los decimales
+// y deja escribir la coma del teclado en espanol.
+function NumInput({ value, onChange, placeholder, decimal = true, className = "input" }) {
+  return (
+    <input
+      className={className}
+      type="text"
+      inputMode={decimal ? "decimal" : "numeric"}
+      autoComplete="off"
+      placeholder={placeholder}
+      value={value}
+      onChange={(e) => onChange(decimal ? sanitizeDecimal(e.target.value) : sanitizeInt(e.target.value))}
+    />
+  );
+}
+
 // ---------------------------------------------------------------------------
 function HoyTab({
   config, selectedDay, setSelectedDay, openForm, setOpenForm, lastEntryFor, addLog,
@@ -431,13 +497,27 @@ function HoyTab({
           </div>
 
           {day.exercises.map((ex) => (
-            <div key={ex.id} className="card edit-row">
-              <input className="input edit-name" value={ex.name} onChange={(e) => updateExercise(selectedDay, ex.id, { name: e.target.value })} placeholder="Nombre del ejercicio" />
-              <label className="uni-toggle">
-                <input type="checkbox" checked={ex.unilateral} onChange={(e) => updateExercise(selectedDay, ex.id, { unilateral: e.target.checked })} />
-                <span>Der/Izq</span>
-              </label>
-              <button className="del-btn" onClick={() => removeExercise(selectedDay, ex.id)}><Trash2 size={15} /></button>
+            <div key={ex.id} className="card ex-edit">
+              <div className="edit-row">
+                <input className="input edit-name" value={ex.name} onChange={(e) => updateExercise(selectedDay, ex.id, { name: e.target.value })} placeholder="Nombre del ejercicio" />
+                <label className="uni-toggle">
+                  <input type="checkbox" checked={ex.unilateral} onChange={(e) => updateExercise(selectedDay, ex.id, { unilateral: e.target.checked })} />
+                  <span>Der/Izq</span>
+                </label>
+                <button className="del-btn" onClick={() => removeExercise(selectedDay, ex.id)}><Trash2 size={15} /></button>
+              </div>
+              <div className="target-row">
+                <label className="target-field">
+                  <span className="target-cap">Series</span>
+                  <NumInput className="input target-input" decimal={false} value={ex.sets ?? ""} placeholder="4"
+                    onChange={(v) => updateExercise(selectedDay, ex.id, { sets: v })} />
+                </label>
+                <label className="target-field">
+                  <span className="target-cap">Reps</span>
+                  <input className="input target-input" type="text" autoComplete="off" value={ex.reps ?? ""} placeholder="8-10"
+                    onChange={(e) => updateExercise(selectedDay, ex.id, { reps: e.target.value })} />
+                </label>
+              </div>
             </div>
           ))}
 
@@ -471,26 +551,29 @@ function ExerciseCard({ exercise, day, last, isOpen, onToggle, onSave }) {
   const [weightL, setWeightL] = useState("");
   const [repsL, setRepsL] = useState("");
 
+  const target = targetText(exercise);
+
   function lastLabel() {
     if (!last) return "Sin registros todavía";
     if (exercise.unilateral) {
-      return `Último — Der: ${last.weightR ?? "–"}kg×${last.repsR ?? "–"} · Izq: ${last.weightL ?? "–"}kg×${last.repsL ?? "–"}`;
+      return `Último — Der: ${fmtNum(last.weightR)}kg×${fmtNum(last.repsR)} · Izq: ${fmtNum(last.weightL)}kg×${fmtNum(last.repsL)}`;
     }
-    return `Último: ${last.weight}kg × ${last.reps ?? "–"} reps · ${fmtShort(last.date)}`;
+    return `Último: ${fmtNum(last.weight)}kg × ${fmtNum(last.reps)} reps · ${fmtShort(last.date)}`;
   }
 
   function submit() {
     if (exercise.unilateral) {
-      if (!weightR && !weightL) return;
+      const wR = toNum(weightR), wL = toNum(weightL);
+      if (wR == null && wL == null) return;
       onSave({
         date: todayISO(), day, exerciseId: exercise.id, exerciseName: exercise.name, unilateral: true,
-        weightR: weightR ? Number(weightR) : null, repsR: repsR ? Number(repsR) : null,
-        weightL: weightL ? Number(weightL) : null, repsL: repsL ? Number(repsL) : null,
+        weightR: wR, repsR: toNum(repsR), weightL: wL, repsL: toNum(repsL),
       });
       setWeightR(""); setRepsR(""); setWeightL(""); setRepsL("");
     } else {
-      if (!weight) return;
-      onSave({ date: todayISO(), day, exerciseId: exercise.id, exerciseName: exercise.name, unilateral: false, weight: Number(weight), reps: reps ? Number(reps) : null });
+      const w = toNum(weight);
+      if (w == null) return;
+      onSave({ date: todayISO(), day, exerciseId: exercise.id, exerciseName: exercise.name, unilateral: false, weight: w, reps: toNum(reps) });
       setWeight(""); setReps("");
     }
   }
@@ -500,6 +583,7 @@ function ExerciseCard({ exercise, day, last, isOpen, onToggle, onSave }) {
       <button className="card-head" onClick={onToggle}>
         <div>
           <div className="ex-name">{exercise.name}</div>
+          {target && <div className="target-badge mono">{target}</div>}
           <div className="ex-last">{lastLabel()}</div>
         </div>
         <div className={"card-icon" + (isOpen ? " open" : "")}>{isOpen ? <X size={16} /> : <Plus size={16} />}</div>
@@ -511,19 +595,19 @@ function ExerciseCard({ exercise, day, last, isOpen, onToggle, onSave }) {
             <div className="side-grid">
               <div className="side-col">
                 <div className="side-label accent">Derecho</div>
-                <input className="input" type="number" inputMode="decimal" placeholder="kg" value={weightR} onChange={(e) => setWeightR(e.target.value)} />
-                <input className="input" type="number" inputMode="numeric" placeholder="reps" value={repsR} onChange={(e) => setRepsR(e.target.value)} />
+                <NumInput placeholder="kg" value={weightR} onChange={setWeightR} />
+                <NumInput placeholder="reps" decimal={false} value={repsR} onChange={setRepsR} />
               </div>
               <div className="side-col">
                 <div className="side-label accent2">Izquierdo</div>
-                <input className="input" type="number" inputMode="decimal" placeholder="kg" value={weightL} onChange={(e) => setWeightL(e.target.value)} />
-                <input className="input" type="number" inputMode="numeric" placeholder="reps" value={repsL} onChange={(e) => setRepsL(e.target.value)} />
+                <NumInput placeholder="kg" value={weightL} onChange={setWeightL} />
+                <NumInput placeholder="reps" decimal={false} value={repsL} onChange={setRepsL} />
               </div>
             </div>
           ) : (
             <div className="side-grid two">
-              <input className="input" type="number" inputMode="decimal" placeholder="Peso (kg)" value={weight} onChange={(e) => setWeight(e.target.value)} />
-              <input className="input" type="number" inputMode="numeric" placeholder="Reps" value={reps} onChange={(e) => setReps(e.target.value)} />
+              <NumInput placeholder="Peso (kg)" value={weight} onChange={setWeight} />
+              <NumInput placeholder="Reps" decimal={false} value={reps} onChange={setReps} />
             </div>
           )}
           <button className="save-btn" onClick={submit}>Guardar set</button>
@@ -555,11 +639,12 @@ function ProgresoTab({ logs, bwLogs, addBw, config, allExercises }) {
   const bwData = useMemo(() => [...bwLogs].sort((a, b) => (a.date > b.date ? 1 : -1)).map((b) => ({ date: fmtShort(b.date), Peso: b.weight })), [bwLogs]);
   const startWeight = bwData.length ? bwData[0].Peso : null;
   const currentWeight = bwData.length ? bwData[bwData.length - 1].Peso : null;
-  const delta = startWeight != null && currentWeight != null ? (currentWeight - startWeight).toFixed(1) : null;
+  const delta = startWeight != null && currentWeight != null ? Number((currentWeight - startWeight).toFixed(2)) : null;
 
   function saveBw() {
-    if (!bwInput) return;
-    addBw({ date: todayISO(), weight: Number(bwInput), waist: waistInput ? Number(waistInput) : null });
+    const w = toNum(bwInput);
+    if (w == null) return;
+    addBw({ date: todayISO(), weight: w, waist: toNum(waistInput) });
     setBwInput(""); setWaistInput("");
   }
 
@@ -579,8 +664,8 @@ function ProgresoTab({ logs, bwLogs, addBw, config, allExercises }) {
       <section className="card">
         <div className="section-title">Peso corporal</div>
         <div className="side-grid two">
-          <input className="input" type="number" inputMode="decimal" placeholder="Peso hoy (kg)" value={bwInput} onChange={(e) => setBwInput(e.target.value)} />
-          <input className="input" type="number" inputMode="decimal" placeholder="Cintura (cm)" value={waistInput} onChange={(e) => setWaistInput(e.target.value)} />
+          <NumInput placeholder="Peso hoy (kg)" value={bwInput} onChange={setBwInput} />
+          <NumInput placeholder="Cintura (cm)" value={waistInput} onChange={setWaistInput} />
         </div>
         <button className="save-btn" onClick={saveBw}>Registrar</button>
 
@@ -590,8 +675,8 @@ function ProgresoTab({ logs, bwLogs, addBw, config, allExercises }) {
           <>
             {delta != null && (
               <div className="delta-row">
-                <span className="mono">{startWeight} kg</span><span className="arrow">→</span><span className="mono">{currentWeight} kg</span>
-                <span className={"delta " + (Number(delta) <= 0 ? "down" : "up")}>{Number(delta) <= 0 ? "" : "+"}{delta} kg</span>
+                <span className="mono">{fmtNum(startWeight)} kg</span><span className="arrow">→</span><span className="mono">{fmtNum(currentWeight)} kg</span>
+                <span className={"delta " + (delta <= 0 ? "down" : "up")}>{delta <= 0 ? "" : "+"}{fmtNum(delta)} kg</span>
               </div>
             )}
             <div className="chart-wrap">
@@ -659,14 +744,14 @@ function ProgresoTab({ logs, bwLogs, addBw, config, allExercises }) {
               const r = last.weightR || 0;
               const l = last.weightL || 0;
               const scale = Math.max(r, l, 1) * 1.15;
-              const gap = Math.abs(r - l);
+              const gap = Number(Math.abs(r - l).toFixed(2));
               const leader = r === l ? null : r > l ? "Derecho" : "Izquierdo";
               return (
                 <div key={exercise} className="arm-block">
                   <div className="arm-ex-name">{exercise}</div>
                   <BarRow label="Der" value={r} scale={scale} colorClass="bar-accent" />
                   <BarRow label="Izq" value={l} scale={scale} colorClass="bar-accent2" />
-                  <div className="gap-label">{gap === 0 ? "Parejo — sin brecha" : `Brecha: ${gap.toFixed(1)} kg (adelante: ${leader})`}</div>
+                  <div className="gap-label">{gap === 0 ? "Parejo — sin brecha" : `Brecha: ${fmtNum(gap)} kg (adelante: ${leader})`}</div>
                 </div>
               );
             })}
@@ -683,13 +768,14 @@ function BarRow({ label, value, scale, colorClass }) {
     <div className="bar-row">
       <span className="bar-label mono">{label}</span>
       <div className="bar-track"><div className={"bar-fill " + colorClass} style={{ width: `${pct}%` }} /></div>
-      <span className="bar-value mono">{value ? `${value}kg` : "–"}</span>
+      <span className="bar-value mono">{value ? `${fmtNum(value)}kg` : "–"}</span>
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-function HistorialTab({ logs, deleteLog }) {
+function HistorialTab({ logs, deleteLog, updateLog }) {
+  const [editingId, setEditingId] = useState(null);
   const grouped = useMemo(() => {
     const byDate = {};
     [...logs].sort((a, b) => (a.date < b.date ? 1 : -1)).forEach((l) => {
@@ -709,20 +795,92 @@ function HistorialTab({ logs, deleteLog }) {
         <div key={date} className="hist-group">
           <div className="hist-date">{fmtDateLabel(date)}</div>
           <div className="cardlist">
-            {entries.map((l) => (
-              <div key={l.id} className="hist-row">
-                <div>
-                  <div className="hist-ex">{l.exerciseName}</div>
-                  <div className="hist-detail mono">
-                    {l.unilateral ? `Der ${l.weightR ?? "–"}kg×${l.repsR ?? "–"} · Izq ${l.weightL ?? "–"}kg×${l.repsL ?? "–"}` : `${l.weight}kg${l.reps ? ` × ${l.reps} reps` : ""}`}
+            {entries.map((l) =>
+              editingId === l.id ? (
+                <HistEditRow
+                  key={l.id}
+                  log={l}
+                  onCancel={() => setEditingId(null)}
+                  onSave={(patch) => { updateLog(l.id, patch); setEditingId(null); }}
+                />
+              ) : (
+                <div key={l.id} className="hist-row">
+                  <div>
+                    <div className="hist-ex">{l.exerciseName}</div>
+                    <div className="hist-detail mono">
+                      {l.unilateral
+                        ? `Der ${fmtNum(l.weightR)}kg×${fmtNum(l.repsR)} · Izq ${fmtNum(l.weightL)}kg×${fmtNum(l.repsL)}`
+                        : `${fmtNum(l.weight)}kg${l.reps ? ` × ${l.reps} reps` : ""}`}
+                    </div>
+                  </div>
+                  <div className="hist-actions">
+                    <button className="del-btn" onClick={() => setEditingId(l.id)}><Pencil size={15} /></button>
+                    <button className="del-btn" onClick={() => deleteLog(l.id)}><Trash2 size={15} /></button>
                   </div>
                 </div>
-                <button className="del-btn" onClick={() => deleteLog(l.id)}><Trash2 size={15} /></button>
-              </div>
-            ))}
+              )
+            )}
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function HistEditRow({ log, onCancel, onSave }) {
+  const [weight, setWeight] = useState(toInput(log.weight));
+  const [reps, setReps] = useState(toInput(log.reps));
+  const [weightR, setWeightR] = useState(toInput(log.weightR));
+  const [repsR, setRepsR] = useState(toInput(log.repsR));
+  const [weightL, setWeightL] = useState(toInput(log.weightL));
+  const [repsL, setRepsL] = useState(toInput(log.repsL));
+
+  function submit() {
+    if (log.unilateral) {
+      const wR = toNum(weightR), wL = toNum(weightL);
+      if (wR == null && wL == null) return;
+      onSave({ weightR: wR, repsR: toNum(repsR), weightL: wL, repsL: toNum(repsL) });
+    } else {
+      const w = toNum(weight);
+      if (w == null) return;
+      onSave({ weight: w, reps: toNum(reps) });
+    }
+  }
+
+  return (
+    <div className="card">
+      <div className="hist-ex">{log.exerciseName}</div>
+      <div className="card-form">
+        {log.unilateral ? (
+          <div className="side-grid">
+            <div className="side-col">
+              <div className="side-label accent">Derecho</div>
+              <NumInput placeholder="kg" value={weightR} onChange={setWeightR} />
+              <NumInput placeholder="reps" decimal={false} value={repsR} onChange={setRepsR} />
+            </div>
+            <div className="side-col">
+              <div className="side-label accent2">Izquierdo</div>
+              <NumInput placeholder="kg" value={weightL} onChange={setWeightL} />
+              <NumInput placeholder="reps" decimal={false} value={repsL} onChange={setRepsL} />
+            </div>
+          </div>
+        ) : (
+          <div className="side-grid two">
+            <div className="side-col">
+              <div className="side-label muted">Peso (kg)</div>
+              <NumInput placeholder="kg" value={weight} onChange={setWeight} />
+            </div>
+            <div className="side-col">
+              <div className="side-label muted">Reps</div>
+              <NumInput placeholder="reps" decimal={false} value={reps} onChange={setReps} />
+            </div>
+          </div>
+        )}
+        <div className="edit-actions">
+          <button className="cancel-btn" onClick={onCancel}>Cancelar</button>
+          <button className="save-btn" onClick={submit}>Guardar cambios</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -778,6 +936,7 @@ const CSS = `
 .side-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
 .accent { color: #C08A3E; }
 .accent2 { color: #6E9B8B; }
+.side-label.muted { color: #8B93A0; }
 
 .input { background: #1B1F24; border: 1px solid rgba(237,234,227,0.14); border-radius: 10px; padding: 10px 12px; color: #EDEAE3; font-size: 14px; font-family: 'JetBrains Mono', monospace; width: 100%; }
 .input::placeholder { color: #5C6470; font-family: 'Inter', sans-serif; }
@@ -821,6 +980,18 @@ const CSS = `
 .hist-ex { font-size: 13.5px; font-weight: 600; }
 .hist-detail { font-size: 12px; color: #8B93A0; margin-top: 3px; }
 .del-btn { background: none; border: none; color: #5C6470; padding: 6px; flex-shrink: 0; }
+
+.ex-edit { display: flex; flex-direction: column; gap: 10px; }
+.target-row { display: flex; align-items: center; gap: 10px; }
+.target-field { flex: 1; display: flex; align-items: center; gap: 7px; }
+.target-cap { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: #8B93A0; white-space: nowrap; }
+.target-input { padding: 8px 10px; font-size: 13px; }
+.target-badge { display: inline-block; margin-top: 5px; font-size: 10.5px; letter-spacing: 0.05em; color: #C08A3E; background: rgba(192,138,62,0.14); border-radius: 6px; padding: 2px 8px; }
+
+.hist-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.edit-actions { display: flex; gap: 8px; margin-top: 12px; }
+.edit-actions .save-btn { margin-top: 0; }
+.cancel-btn { flex: 0 0 38%; background: rgba(237,234,227,0.06); border: 1px solid rgba(237,234,227,0.14); color: #EDEAE3; border-radius: 10px; padding: 11px; font-weight: 600; font-size: 13.5px; }
 
 .edit-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #8B93A0; margin-bottom: 6px; }
 .edit-row { display: flex; align-items: center; gap: 8px; }
