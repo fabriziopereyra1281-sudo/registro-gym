@@ -722,7 +722,7 @@ function ProgresoTab({ logs, bwLogs, addBw, config, allExercises }) {
                 <XAxis dataKey="date" stroke="#8B93A0" fontSize={11} />
                 <YAxis stroke="#8B93A0" fontSize={11} domain={["dataMin - 1", "dataMax + 1"]} />
                 <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => [`${fmtNum(v)} cm`, "Cintura"]} />
-                <Line type="monotone" dataKey="Cintura" stroke="#6E9B8B" strokeWidth={2.5} dot={{ r: 3, fill: "#6E9B8B" }} />
+                <Line type="monotone" dataKey="Cintura" stroke={SERIE_2} strokeWidth={2.5} dot={{ r: 3, fill: SERIE_2 }} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -751,12 +751,13 @@ function ProgresoTab({ logs, bwLogs, addBw, config, allExercises }) {
                 <CartesianGrid strokeDasharray="3 3" stroke="#333B44" />
                 <XAxis dataKey="date" stroke="#8B93A0" fontSize={11} />
                 <YAxis stroke="#8B93A0" fontSize={11} />
-                <Tooltip contentStyle={TOOLTIP_STYLE} />
-                <Legend wrapperStyle={{ fontSize: 11, color: "#8B93A0" }} />
+                <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v, name) => [`${fmtNum(v)} kg`, name]} />
+                {/* El texto de la leyenda va en tinta neutra: la identidad la carga la marca de color de al lado. */}
+                <Legend wrapperStyle={{ fontSize: 11 }} formatter={(value) => <span style={{ color: "#8B93A0" }}>{value}</span>} />
                 {exerciseInfo?.unilateral ? (
                   <>
                     <Line type="monotone" dataKey="Derecho" stroke="#C08A3E" strokeWidth={2.5} dot={{ r: 3 }} connectNulls />
-                    <Line type="monotone" dataKey="Izquierdo" stroke="#6E9B8B" strokeWidth={2.5} dot={{ r: 3 }} connectNulls />
+                    <Line type="monotone" dataKey="Izquierdo" stroke={SERIE_2} strokeWidth={2.5} dot={{ r: 3 }} connectNulls />
                   </>
                 ) : (
                   <Line type="monotone" dataKey="Peso" stroke="#C08A3E" strokeWidth={2.5} dot={{ r: 3 }} />
@@ -921,6 +922,14 @@ function HistEditRow({ log, onCancel, onSave }) {
 }
 
 // ---------------------------------------------------------------------------
+// Color de la segunda serie de datos. El verde #6E9B8B venia cumpliendo dos
+// papeles a la vez -- serie de datos y estado positivo -- y contra el dorado de
+// marca quedaba en dE 13,4, por debajo del piso de 15: costaba distinguir
+// Derecho de Izquierdo incluso con vision de color normal. Este verde-azulado
+// da dE 22,3 en vision normal y 16,4 bajo daltonismo, y el verde queda libre
+// para lo que siempre significo: nota, info y variacion a favor.
+const SERIE_2 = "#0092B0";
+
 const TOOLTIP_STYLE = { background: "#242A31", border: "1px solid rgba(237,234,227,0.12)", borderRadius: 10, fontSize: 12, color: "#EDEAE3" };
 
 const CSS = `
@@ -970,7 +979,7 @@ const CSS = `
 .side-col { display: flex; flex-direction: column; gap: 6px; }
 .side-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
 .accent { color: #C08A3E; }
-.accent2 { color: #6E9B8B; }
+.accent2 { color: #0092B0; }  /* rotulo de la serie Izquierdo */
 .side-label.muted { color: #8B93A0; }
 
 .input { background: #1B1F24; border: 1px solid rgba(237,234,227,0.14); border-radius: 10px; padding: 10px 12px; color: #EDEAE3; font-size: 14px; font-family: 'JetBrains Mono', monospace; width: 100%; }
@@ -1005,7 +1014,7 @@ const CSS = `
 .bar-track { flex: 1; height: 14px; background: #1B1F24; border-radius: 7px; overflow: hidden; }
 .bar-fill { height: 100%; border-radius: 7px; transition: width 0.3s; }
 .bar-accent { background: #C08A3E; }
-.bar-accent2 { background: #6E9B8B; }
+.bar-accent2 { background: #0092B0; }
 .bar-value { width: 52px; text-align: right; font-size: 11.5px; color: #EDEAE3; }
 .gap-label { font-size: 11.5px; color: #8B93A0; margin-top: 2px; }
 
