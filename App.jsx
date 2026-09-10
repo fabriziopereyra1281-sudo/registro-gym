@@ -641,6 +641,15 @@ function ProgresoTab({ logs, bwLogs, addBw, config, allExercises }) {
   const currentWeight = bwData.length ? bwData[bwData.length - 1].Peso : null;
   const delta = startWeight != null && currentWeight != null ? Number((currentWeight - startWeight).toFixed(2)) : null;
 
+  // La cintura va en su propio grafico: son cm, no kg, y no comparten escala.
+  const waistData = useMemo(
+    () => [...bwLogs].filter((b) => b.waist != null).sort((a, b) => (a.date > b.date ? 1 : -1)).map((b) => ({ date: fmtShort(b.date), Cintura: b.waist })),
+    [bwLogs]
+  );
+  const startWaist = waistData.length ? waistData[0].Cintura : null;
+  const currentWaist = waistData.length ? waistData[waistData.length - 1].Cintura : null;
+  const waistDelta = startWaist != null && currentWaist != null ? Number((currentWaist - startWaist).toFixed(2)) : null;
+
   function saveBw() {
     const w = toNum(bwInput);
     if (w == null) return;
@@ -685,7 +694,7 @@ function ProgresoTab({ logs, bwLogs, addBw, config, allExercises }) {
                   <CartesianGrid strokeDasharray="3 3" stroke="#333B44" />
                   <XAxis dataKey="date" stroke="#8B93A0" fontSize={11} />
                   <YAxis stroke="#8B93A0" fontSize={11} domain={["dataMin - 1", "dataMax + 1"]} />
-                  <Tooltip contentStyle={TOOLTIP_STYLE} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => [`${fmtNum(v)} kg`, "Peso"]} />
                   <Line type="monotone" dataKey="Peso" stroke="#C08A3E" strokeWidth={2.5} dot={{ r: 3, fill: "#C08A3E" }} />
                 </LineChart>
               </ResponsiveContainer>
@@ -693,6 +702,32 @@ function ProgresoTab({ logs, bwLogs, addBw, config, allExercises }) {
           </>
         )}
       </section>
+
+      {waistData.length > 0 && (
+        <section className="card">
+          <div className="section-title">Cintura</div>
+          {waistDelta != null && waistData.length > 1 && (
+            <div className="delta-row">
+              <span className="mono">{fmtNum(startWaist)} cm</span><span className="arrow">→</span><span className="mono">{fmtNum(currentWaist)} cm</span>
+              <span className={"delta " + (waistDelta <= 0 ? "down" : "up")}>{waistDelta <= 0 ? "" : "+"}{fmtNum(waistDelta)} cm</span>
+            </div>
+          )}
+          {waistData.length === 1 && (
+            <div className="delta-row"><span className="mono">{fmtNum(currentWaist)} cm</span><span className="section-sub" style={{ margin: 0 }}>— cargá otra medición para ver la tendencia</span></div>
+          )}
+          <div className="chart-wrap">
+            <ResponsiveContainer width="100%" height={180}>
+              <LineChart data={waistData} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#333B44" />
+                <XAxis dataKey="date" stroke="#8B93A0" fontSize={11} />
+                <YAxis stroke="#8B93A0" fontSize={11} domain={["dataMin - 1", "dataMax + 1"]} />
+                <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v) => [`${fmtNum(v)} cm`, "Cintura"]} />
+                <Line type="monotone" dataKey="Cintura" stroke="#6E9B8B" strokeWidth={2.5} dot={{ r: 3, fill: "#6E9B8B" }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </section>
+      )}
 
       <section className="card">
         <div className="section-title">Progresión de levantamientos</div>
