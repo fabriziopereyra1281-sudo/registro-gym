@@ -160,6 +160,7 @@ export default function App() {
   const [openForm, setOpenForm] = useState(null);
   const [editMode, setEditMode] = useState(false);
   const [toast, setToast] = useState("");
+  const [recoveryMode, setRecoveryMode] = useState(false);
 
   function showToast(msg) {
     setToast(msg);
@@ -169,6 +170,10 @@ export default function App() {
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
     const { data: sub } = supabase.auth.onAuthStateChange((_event, sess) => {
+      // Supabase entrega el link del mail de "olvidé mi contraseña" como una
+      // sesion temporal con este evento: se muestra el formulario de nueva
+      // contraseña en vez de entrar directo a la app con esa sesion.
+      if (_event === "PASSWORD_RECOVERY") setRecoveryMode(true);
       setSession(sess);
       if (!sess) {
         setConfig(null);
@@ -299,6 +304,15 @@ export default function App() {
     return DAY_ORDER.flatMap((dk) => config[dk].exercises.map((e) => ({ ...e, day: dk })));
   }, [config]);
 
+  if (recoveryMode) {
+    return (
+      <div className="shell">
+        <style>{CSS}</style>
+        <ResetPasswordScreen onDone={() => setRecoveryMode(false)} />
+      </div>
+    );
+  }
+
   if (session === undefined) {
     return (
       <div className="shell">
@@ -379,6 +393,16 @@ function AuthScreen() {
   const [info, setInfo] = useState("");
   const [loading, setLoading] = useState(false);
 
+  async function recuperar() {
+    setError(""); setInfo("");
+    if (!email) { setError("Escribí tu mail arriba y tocá de nuevo \"¿Olvidaste tu contraseña?\"."); return; }
+    setLoading(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
+    setLoading(false);
+    if (error) setError(traducirError(error.message));
+    else setInfo("Te mandamos un mail para elegir una contraseña nueva. Revisá la bandeja de entrada (y spam).");
+  }
+
   async function submit() {
     setError(""); setInfo("");
     if (!email || !password) { setError("Completá mail y contraseña."); return; }
@@ -417,6 +441,45 @@ function AuthScreen() {
       <button className="auth-switch" onClick={() => { setMode(mode === "login" ? "signup" : "login"); setError(""); setInfo(""); }}>
         {mode === "login" ? "¿No tenés cuenta? Creá una" : "¿Ya tenés cuenta? Iniciá sesión"}
       </button>
+      {mode === "login" && (
+        <button className="auth-forgot" onClick={recuperar} disabled={loading}>¿Olvidaste tu contraseña?</button>
+      )}
+    </div>
+  );
+}
+
+// Pantalla que se muestra al volver del mail de recuperacion: en vez de entrar
+// directo a la app con la sesion temporal que manda Supabase, pide elegir una
+// contraseña nueva y recien despues sigue.
+function ResetPasswordScreen({ onDone }) {
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function submit() {
+    setError("");
+    if (password.length < 6) { setError("La contraseña necesita al menos 6 caracteres."); return; }
+    if (password !== confirm) { setError("Las dos contraseñas no coinciden."); return; }
+    setLoading(true);
+    const { error } = await supabase.auth.updateUser({ password });
+    setLoading(false);
+    if (error) setError(error.message);
+    else onDone();
+  }
+
+  return (
+    <div className="auth-shell">
+      <div className="eyebrow">Registro de entrenamiento</div>
+      <div className="auth-title">Nueva contraseña</div>
+      <div className="auth-card">
+        <input className="input" type="password" placeholder="Contraseña nueva" value={password} onChange={(e) => setPassword(e.target.value)} />
+        <input className="input" type="password" placeholder="Repetí la contraseña" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+        {error && <div className="auth-error">{error}</div>}
+        <button className="save-btn" onClick={submit} disabled={loading}>
+          {loading ? "Un momento…" : "Guardar contraseña"}
+        </button>
+      </div>
     </div>
   );
 }
@@ -948,6 +1011,7 @@ const CSS = `
 .auth-error { color: #C0673A; font-size: 12.5px; }
 .auth-info { color: #6E9B8B; font-size: 12.5px; }
 .auth-switch { background: none; border: none; color: #C08A3E; font-size: 12.5px; font-weight: 600; }
+.auth-forgot { background: none; border: none; color: #8B93A0; font-size: 12px; margin-top: -4px; }
 
 .header { padding: 14px 20px 18px; border-bottom: 1px solid rgba(237,234,227,0.08); }
 .eyebrow { font-family: 'JetBrains Mono', monospace; font-size: 10.5px; letter-spacing: 0.15em; text-transform: uppercase; color: #8B93A0; }
