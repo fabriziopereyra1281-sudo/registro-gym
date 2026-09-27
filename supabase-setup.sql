@@ -112,6 +112,29 @@ create table if not exists progress_photos (
   created_at timestamptz default now()
 );
 
+-- Catalogo de suplementos que toma el usuario: nombre, dosis y horario
+-- habitual en texto libre (ej. "Mañana", "Post-entreno").
+create table if not exists supplements (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users not null,
+  name text not null,
+  dose text,
+  timing text,
+  active boolean default true,
+  created_at timestamptz default now()
+);
+
+-- Marca de "tomado" por dia: una fila por suplemento y dia en que se tomo.
+-- Tomar/destomar hoy es simplemente insertar o borrar la fila del dia.
+create table if not exists supplement_logs (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users not null,
+  supplement_id uuid references supplements on delete cascade not null,
+  date date not null,
+  created_at timestamptz default now(),
+  unique (supplement_id, date)
+);
+
 alter table configs enable row level security;
 alter table workout_logs enable row level security;
 alter table bodyweight_logs enable row level security;
@@ -120,6 +143,8 @@ alter table daily_checkins enable row level security;
 alter table nutrition_targets enable row level security;
 alter table meal_logs enable row level security;
 alter table progress_photos enable row level security;
+alter table supplements enable row level security;
+alter table supplement_logs enable row level security;
 
 drop policy if exists "own_configs" on configs;
 create policy "own_configs" on configs
@@ -173,3 +198,11 @@ create policy "own_progress_photos_insert" on storage.objects
 drop policy if exists "own_progress_photos_delete" on storage.objects;
 create policy "own_progress_photos_delete" on storage.objects
   for delete using (bucket_id = 'progress-photos' and (storage.foldername(name))[1] = auth.uid()::text);
+
+drop policy if exists "own_supplements" on supplements;
+create policy "own_supplements" on supplements
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+drop policy if exists "own_supplement_logs" on supplement_logs;
+create policy "own_supplement_logs" on supplement_logs
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);

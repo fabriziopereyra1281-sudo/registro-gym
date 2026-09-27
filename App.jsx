@@ -175,6 +175,12 @@ function mapTargetsRow(row) {
   if (!row) return null;
   return { calories: row.calories, protein: row.protein, carbs: row.carbs, fat: row.fat };
 }
+function mapSupplementRow(row) {
+  return { id: row.id, name: row.name, dose: row.dose, timing: row.timing, active: row.active };
+}
+function mapSupplementLogRow(row) {
+  return { id: row.id, supplementId: row.supplement_id, date: row.date };
+}
 function mapPhotoRow(row) {
   return {
     id: row.id,
@@ -226,6 +232,8 @@ export default function App() {
   const [mealLogs, setMealLogs] = useState([]);
   const [photos, setPhotos] = useState([]);
   const [photoUrls, setPhotoUrls] = useState({});
+  const [supplements, setSupplements] = useState([]);
+  const [supplementLogs, setSupplementLogs] = useState([]);
   const [dataLoaded, setDataLoaded] = useState(false);
   const [openForm, setOpenForm] = useState(null);
   const [editMode, setEditMode] = useState(false);
@@ -255,6 +263,8 @@ export default function App() {
         setMealLogs([]);
         setPhotos([]);
         setPhotoUrls({});
+        setSupplements([]);
+        setSupplementLogs([]);
         setDataLoaded(false);
       }
     });
@@ -287,6 +297,10 @@ export default function App() {
       .from("meal_logs").select("*").eq("user_id", userId).order("date", { ascending: true });
     const { data: photoRows } = await supabase
       .from("progress_photos").select("*").eq("user_id", userId).order("date", { ascending: true });
+    const { data: supplementRows } = await supabase
+      .from("supplements").select("*").eq("user_id", userId).order("created_at", { ascending: true });
+    const { data: supplementLogRows } = await supabase
+      .from("supplement_logs").select("*").eq("user_id", userId).order("date", { ascending: true });
 
     setConfig(cfg);
     setLogs((logRows || []).map(mapLogRow));
@@ -296,6 +310,8 @@ export default function App() {
     setNutritionTargets(mapTargetsRow(targetsRow));
     setMealLogs((mealRows || []).map(mapMealRow));
     setPhotos((photoRows || []).map(mapPhotoRow));
+    setSupplements((supplementRows || []).map(mapSupplementRow));
+    setSupplementLogs((supplementLogRows || []).map(mapSupplementLogRow));
     setDataLoaded(true);
   }
 
@@ -501,6 +517,51 @@ export default function App() {
     return () => { cancelled = true; };
   }, [photos]);
 
+  async function addSupplement(entry) {
+    const row = {
+      user_id: session.user.id,
+      name: entry.name,
+      dose: entry.dose || null,
+      timing: entry.timing || null,
+      active: true,
+    };
+    const { data, error } = await supabase.from("supplements").insert(row).select().single();
+    if (!error && data) {
+      setSupplements((prev) => [...prev, mapSupplementRow(data)]);
+      showToast("Suplemento agregado");
+    }
+  }
+
+  async function toggleSupplementActive(id, active) {
+    const { data, error } = await supabase.from("supplements").update({ active }).eq("id", id).select().single();
+    if (!error && data) {
+      setSupplements((prev) => prev.map((s) => (s.id === id ? mapSupplementRow(data) : s)));
+    }
+  }
+
+  async function deleteSupplement(id) {
+    await supabase.from("supplements").delete().eq("id", id);
+    setSupplements((prev) => prev.filter((s) => s.id !== id));
+    setSupplementLogs((prev) => prev.filter((l) => l.supplementId !== id));
+  }
+
+  async function toggleSupplementToday(supplementId) {
+    const today = todayISO();
+    const existing = supplementLogs.find((l) => l.supplementId === supplementId && l.date === today);
+    if (existing) {
+      await supabase.from("supplement_logs").delete().eq("id", existing.id);
+      setSupplementLogs((prev) => prev.filter((l) => l.id !== existing.id));
+    } else {
+      const { data, error } = await supabase
+        .from("supplement_logs")
+        .insert({ user_id: session.user.id, supplement_id: supplementId, date: today })
+        .select().single();
+      if (!error && data) {
+        setSupplementLogs((prev) => [...prev, mapSupplementLogRow(data)]);
+      }
+    }
+  }
+
   function lastEntryFor(exerciseId) {
     const matches = logs.filter((l) => l.exerciseId === exerciseId).sort((a, b) => (a.date < b.date ? 1 : -1));
     return matches[0] || null;
@@ -619,6 +680,12 @@ export default function App() {
               deleteActivity={deleteActivity}
               checkins={checkins}
               saveCheckin={saveCheckin}
+              supplements={supplements}
+              supplementLogs={supplementLogs}
+              addSupplement={addSupplement}
+              toggleSupplementActive={toggleSupplementActive}
+              deleteSupplement={deleteSupplement}
+              toggleSupplementToday={toggleSupplementToday}
             />
           ) : tab === "nutricion" ? (
             <NutricionTab
@@ -636,6 +703,8 @@ export default function App() {
               checkins={checkins}
               mealLogs={mealLogs}
               targets={nutritionTargets}
+              supplements={supplements}
+              supplementLogs={supplementLogs}
             />
           )}
         </main>
@@ -1474,7 +1543,10 @@ function HistEditRow({ log, onCancel, onSave }) {
 const RPE_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 const ENERGY_LABELS = { 1: "Muy baja", 2: "Baja", 3: "Media", 4: "Buena", 5: "Muy buena" };
 
-function MasTab({ activityLogs, addActivity, deleteActivity, checkins, saveCheckin }) {
+function MasTab({
+  activityLogs, addActivity, deleteActivity, checkins, saveCheckin,
+  supplements, supplementLogs, addSupplement, toggleSupplementActive, deleteSupplement, toggleSupplementToday,
+}) {
   const todaysCheckin = checkins.find((c) => c.date === todayISO()) || null;
   const recentActivities = useMemo(
     () => [...activityLogs].sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 8),
@@ -1510,6 +1582,15 @@ function MasTab({ activityLogs, addActivity, deleteActivity, checkins, saveCheck
       )}
 
       <CheckinForm existing={todaysCheckin} onSave={saveCheckin} />
+
+      <SupplementsSection
+        supplements={supplements}
+        supplementLogs={supplementLogs}
+        addSupplement={addSupplement}
+        toggleSupplementActive={toggleSupplementActive}
+        deleteSupplement={deleteSupplement}
+        toggleSupplementToday={toggleSupplementToday}
+      />
     </div>
   );
 }
@@ -1638,6 +1719,97 @@ function CheckinForm({ existing, onSave }) {
       <input className="input" style={{ marginTop: 12 }} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notas (opcional)" />
       <button className="save-btn" onClick={submit}>{existing ? "Actualizar chequeo" : "Guardar chequeo"}</button>
     </section>
+  );
+}
+
+function SupplementsSection({
+  supplements, supplementLogs, addSupplement, toggleSupplementActive, deleteSupplement, toggleSupplementToday,
+}) {
+  const today = todayISO();
+  const active = supplements.filter((s) => s.active);
+  const inactive = supplements.filter((s) => !s.active);
+
+  function adherence7(supplementId) {
+    const from = daysAgoISO(6);
+    return supplementLogs.filter((l) => l.supplementId === supplementId && l.date >= from && l.date <= today).length;
+  }
+
+  return (
+    <section className="card">
+      <div className="section-title">Suplementos</div>
+      <div className="section-sub">Marcá lo que tomaste hoy — la adherencia queda como otra señal para el Coach</div>
+
+      <AddSupplementForm onSave={addSupplement} />
+
+      {active.length === 0 ? (
+        <div className="empty small">Todavía no agregaste ningún suplemento.</div>
+      ) : (
+        <div className="cardlist" style={{ marginTop: 8 }}>
+          {active.map((s) => {
+            const takenToday = supplementLogs.some((l) => l.supplementId === s.id && l.date === today);
+            const count7 = adherence7(s.id);
+            return (
+              <div key={s.id} className="supp-row">
+                <label className="supp-check">
+                  <input type="checkbox" checked={takenToday} onChange={() => toggleSupplementToday(s.id)} />
+                  <div>
+                    <div className="hist-ex">{s.name}{s.dose ? ` · ${s.dose}` : ""}</div>
+                    <div className="hist-detail mono">{s.timing || "sin horario fijo"} · {count7}/7 últimos días</div>
+                  </div>
+                </label>
+                <div className="hist-actions">
+                  <button className="del-btn" title="Pausar" onClick={() => toggleSupplementActive(s.id, false)}><X size={15} /></button>
+                  <button className="del-btn" onClick={() => deleteSupplement(s.id)}><Trash2 size={15} /></button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {inactive.length > 0 && (
+        <>
+          <div className="edit-label" style={{ marginTop: 14 }}>Pausados</div>
+          <div className="cardlist" style={{ marginTop: 8 }}>
+            {inactive.map((s) => (
+              <div key={s.id} className="hist-row">
+                <div className="hist-ex" style={{ color: "#5C6470" }}>{s.name}{s.dose ? ` · ${s.dose}` : ""}</div>
+                <div className="hist-actions">
+                  <button className="del-btn" title="Reactivar" onClick={() => toggleSupplementActive(s.id, true)}><Plus size={15} /></button>
+                  <button className="del-btn" onClick={() => deleteSupplement(s.id)}><Trash2 size={15} /></button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function AddSupplementForm({ onSave }) {
+  const [name, setName] = useState("");
+  const [dose, setDose] = useState("");
+  const [timing, setTiming] = useState(null);
+
+  function submit() {
+    if (!name.trim()) return;
+    onSave({ name: name.trim(), dose: dose.trim(), timing });
+    setName(""); setDose(""); setTiming(null);
+  }
+
+  return (
+    <div className="card-form" style={{ marginBottom: 14 }}>
+      <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Nombre (ej: Creatina)" />
+      <input className="input" value={dose} onChange={(e) => setDose(e.target.value)} placeholder="Dosis (ej: 5g, opcional)" />
+      <div className="edit-label">Horario habitual</div>
+      <div className="chiprow wrap">
+        {["Mañana", "Pre-entreno", "Post-entreno", "Noche"].map((t) => (
+          <button key={t} className={"chip" + (timing === t ? " chip-active" : "")} onClick={() => setTiming(timing === t ? null : t)}>{t}</button>
+        ))}
+      </div>
+      <button className="save-btn" onClick={submit}>Agregar suplemento</button>
+    </div>
   );
 }
 
@@ -1863,7 +2035,7 @@ function photoVerdict(older, newer) {
   return { tone, label, text: `${label}: ${parts.join(" · ")} entre estas dos fotos.` };
 }
 
-function computeCoach({ bwLogs, logs, activityLogs, checkins, mealLogs, targets }) {
+function computeCoach({ bwLogs, logs, activityLogs, checkins, mealLogs, targets, supplements, supplementLogs }) {
   const today = todayISO();
   const w1Start = daysAgoISO(6); // esta semana: hoy y los 6 dias anteriores
   const w2Start = daysAgoISO(13);
@@ -1984,6 +2156,24 @@ function computeCoach({ bwLogs, logs, activityLogs, checkins, mealLogs, targets 
     });
   }
 
+  // Suplementos: adherencia de la semana entre los que estan activos.
+  const activeSupplementIds = (supplements || []).filter((s) => s.active).map((s) => s.id);
+  if (activeSupplementIds.length > 0) {
+    const takenThisWeek = (supplementLogs || []).filter(
+      (l) => activeSupplementIds.includes(l.supplementId) && inWindow(l.date, w1Start, today)
+    ).length;
+    const possible = activeSupplementIds.length * 7;
+    const pct = possible > 0 ? Math.round((takenThisWeek / possible) * 100) : null;
+    blocks.push({
+      key: "suplementos",
+      label: "Suplementos",
+      status: pct == null ? "na" : pct >= 80 ? "flat" : pct >= 50 ? "down" : "up",
+      detail: `${takenThisWeek}/${possible} tomas esta semana (${pct}% adherencia, ${activeSupplementIds.length} activo${activeSupplementIds.length === 1 ? "" : "s"})`,
+    });
+  } else {
+    blocks.push({ key: "suplementos", label: "Suplementos", status: "na", detail: "Agregá suplementos en \"Más\" para activar este bloque." });
+  }
+
   // Decision final: reglas en orden de prioridad.
   let decision = "Seguí cargando datos — con una semana más el motor ya puede comparar tendencias.";
   let tone = "info";
@@ -2027,10 +2217,10 @@ function StatusDot({ status }) {
   return <span className={"status-dot " + cls[status]}>{map[status]}</span>;
 }
 
-function CoachTab({ bwLogs, logs, activityLogs, checkins, mealLogs, targets }) {
+function CoachTab({ bwLogs, logs, activityLogs, checkins, mealLogs, targets, supplements, supplementLogs }) {
   const result = useMemo(
-    () => computeCoach({ bwLogs, logs, activityLogs, checkins, mealLogs, targets }),
-    [bwLogs, logs, activityLogs, checkins, mealLogs, targets]
+    () => computeCoach({ bwLogs, logs, activityLogs, checkins, mealLogs, targets, supplements, supplementLogs }),
+    [bwLogs, logs, activityLogs, checkins, mealLogs, targets, supplements, supplementLogs]
   );
 
   return (
@@ -2243,5 +2433,9 @@ const CSS = `
 .verdict-badge.tone-warn { background: rgba(192,103,58,0.14); color: #C0673A; }
 .verdict-badge.tone-flat { background: rgba(139,147,160,0.12); color: #8B93A0; }
 .verdict-badge.tone-info { background: rgba(139,147,160,0.08); color: #8B93A0; font-weight: 500; }
+
+.supp-row { background: #242A31; border: 1px solid rgba(237,234,227,0.06); border-radius: 12px; padding: 12px 14px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.supp-check { display: flex; align-items: center; gap: 10px; flex: 1; cursor: pointer; }
+.supp-check input[type="checkbox"] { width: 20px; height: 20px; accent-color: #C08A3E; flex-shrink: 0; }
 
 `;
