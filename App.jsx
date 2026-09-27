@@ -397,25 +397,35 @@ function AuthScreen() {
     setError(""); setInfo("");
     if (!email) { setError("Escribí tu mail arriba y tocá de nuevo \"¿Olvidaste tu contraseña?\"."); return; }
     setLoading(true);
-    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
-    setLoading(false);
-    if (error) setError(traducirError(error.message));
-    else setInfo("Te mandamos un mail para elegir una contraseña nueva. Revisá la bandeja de entrada (y spam).");
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
+      if (error) setError(traducirError(error.message));
+      else setInfo("Te mandamos un mail para elegir una contraseña nueva. Revisá la bandeja de entrada (y spam).");
+    } catch (err) {
+      setError("No se pudo conectar. Probá de nuevo en un momento.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function submit() {
     setError(""); setInfo("");
     if (!email || !password) { setError("Completá mail y contraseña."); return; }
     setLoading(true);
-    if (mode === "login") {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) setError(traducirError(error.message));
-    } else {
-      const { error } = await supabase.auth.signUp({ email, password });
-      if (error) setError(traducirError(error.message));
-      else setInfo("Cuenta creada. Si pide confirmación, revisá tu mail.");
+    try {
+      if (mode === "login") {
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) setError(traducirError(error.message));
+      } else {
+        const { error } = await supabase.auth.signUp({ email, password });
+        if (error) setError(traducirError(error.message));
+        else setInfo("Cuenta creada. Si pide confirmación, revisá tu mail.");
+      }
+    } catch (err) {
+      setError("No se pudo conectar. Probá de nuevo en un momento.");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   function traducirError(msg) {
@@ -432,8 +442,6 @@ function AuthScreen() {
       <div className="auth-card">
         <input className="input" type="email" placeholder="Mail" value={email} onChange={(e) => setEmail(e.target.value)} autoCapitalize="none" />
         <input className="input" type="password" placeholder="Contraseña" value={password} onChange={(e) => setPassword(e.target.value)} />
-        {error && <div className="auth-error">{error}</div>}
-        {info && <div className="auth-info">{info}</div>}
         <button className="save-btn" onClick={submit} disabled={loading}>
           {loading ? "Un momento…" : mode === "login" ? "Entrar" : "Crear cuenta"}
         </button>
@@ -442,8 +450,12 @@ function AuthScreen() {
         {mode === "login" ? "¿No tenés cuenta? Creá una" : "¿Ya tenés cuenta? Iniciá sesión"}
       </button>
       {mode === "login" && (
-        <button className="auth-forgot" onClick={recuperar} disabled={loading}>¿Olvidaste tu contraseña?</button>
+        <button className="auth-forgot" onClick={recuperar} disabled={loading}>
+          {loading ? "Enviando…" : "¿Olvidaste tu contraseña?"}
+        </button>
       )}
+      {error && <div className="auth-error">{error}</div>}
+      {info && <div className="auth-info">{info}</div>}
     </div>
   );
 }
@@ -1008,8 +1020,8 @@ const CSS = `
 .auth-shell { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 32px 24px; gap: 18px; min-height: 100vh; width: 100%; max-width: 420px; margin: 0 auto; }
 .auth-title { font-family: 'Oswald', sans-serif; font-weight: 600; font-size: 30px; text-transform: uppercase; color: #EDEAE3; }
 .auth-card { width: 100%; display: flex; flex-direction: column; gap: 10px; background: #242A31; border: 1px solid rgba(237,234,227,0.08); border-radius: 16px; padding: 20px; }
-.auth-error { color: #C0673A; font-size: 12.5px; }
-.auth-info { color: #6E9B8B; font-size: 12.5px; }
+.auth-error { color: #C0673A; font-size: 12.5px; width: 100%; text-align: center; }
+.auth-info { color: #6E9B8B; font-size: 12.5px; width: 100%; text-align: center; }
 .auth-switch { background: none; border: none; color: #C08A3E; font-size: 12.5px; font-weight: 600; }
 .auth-forgot { background: none; border: none; color: #8B93A0; font-size: 12px; margin-top: -4px; }
 
