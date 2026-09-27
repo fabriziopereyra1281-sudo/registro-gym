@@ -70,11 +70,41 @@ create table if not exists daily_checkins (
   unique (user_id, date)
 );
 
+-- Objetivos diarios de nutricion (una fila por usuario, se actualiza in place).
+create table if not exists nutrition_targets (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users not null unique,
+  calories int,
+  protein numeric,
+  carbs numeric,
+  fat numeric,
+  updated_at timestamptz default now()
+);
+
+-- Comidas registradas, con sus macros. meal_type es texto libre (desayuno,
+-- almuerzo, merienda, cena, pre-entreno, post-entreno, otro) para no atarse
+-- a un enum rigido.
+create table if not exists meal_logs (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users not null,
+  date date not null,
+  meal_type text,
+  name text not null,
+  calories int,
+  protein numeric,
+  carbs numeric,
+  fat numeric,
+  notes text,
+  created_at timestamptz default now()
+);
+
 alter table configs enable row level security;
 alter table workout_logs enable row level security;
 alter table bodyweight_logs enable row level security;
 alter table activity_logs enable row level security;
 alter table daily_checkins enable row level security;
+alter table nutrition_targets enable row level security;
+alter table meal_logs enable row level security;
 
 drop policy if exists "own_configs" on configs;
 create policy "own_configs" on configs
@@ -94,4 +124,12 @@ create policy "own_activity_logs" on activity_logs
 
 drop policy if exists "own_daily_checkins" on daily_checkins;
 create policy "own_daily_checkins" on daily_checkins
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+drop policy if exists "own_nutrition_targets" on nutrition_targets;
+create policy "own_nutrition_targets" on nutrition_targets
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+drop policy if exists "own_meal_logs" on meal_logs;
+create policy "own_meal_logs" on meal_logs
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);

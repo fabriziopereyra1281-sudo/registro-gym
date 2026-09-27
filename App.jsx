@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import {
-  Dumbbell, TrendingUp, History, Plus, Trash2, ChevronDown, X, Check, Pencil, LogOut, Activity,
+  Dumbbell, TrendingUp, History, Plus, Trash2, ChevronDown, X, Check, Pencil, LogOut, Activity, Utensils, Sparkles,
 } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -170,6 +170,25 @@ function mapCheckinRow(row) {
     notes: row.notes,
   };
 }
+function mapTargetsRow(row) {
+  if (!row) return null;
+  return { calories: row.calories, protein: row.protein, carbs: row.carbs, fat: row.fat };
+}
+function mapMealRow(row) {
+  return {
+    id: row.id,
+    date: row.date,
+    mealType: row.meal_type,
+    name: row.name,
+    calories: row.calories,
+    protein: row.protein,
+    carbs: row.carbs,
+    fat: row.fat,
+    notes: row.notes,
+  };
+}
+
+const MEAL_TYPES = ["Desayuno", "Almuerzo", "Merienda", "Cena", "Pre-entreno", "Post-entreno", "Otro"];
 
 const PAIN_ZONES = [
   { key: "codo_d", label: "Codo der." },
@@ -192,6 +211,8 @@ export default function App() {
   const [bwLogs, setBwLogs] = useState([]);
   const [activityLogs, setActivityLogs] = useState([]);
   const [checkins, setCheckins] = useState([]);
+  const [nutritionTargets, setNutritionTargets] = useState(null);
+  const [mealLogs, setMealLogs] = useState([]);
   const [dataLoaded, setDataLoaded] = useState(false);
   const [openForm, setOpenForm] = useState(null);
   const [editMode, setEditMode] = useState(false);
@@ -217,6 +238,8 @@ export default function App() {
         setBwLogs([]);
         setActivityLogs([]);
         setCheckins([]);
+        setNutritionTargets(null);
+        setMealLogs([]);
         setDataLoaded(false);
       }
     });
@@ -243,12 +266,18 @@ export default function App() {
       .from("activity_logs").select("*").eq("user_id", userId).order("date", { ascending: true });
     const { data: checkinRows } = await supabase
       .from("daily_checkins").select("*").eq("user_id", userId).order("date", { ascending: true });
+    const { data: targetsRow } = await supabase
+      .from("nutrition_targets").select("*").eq("user_id", userId).maybeSingle();
+    const { data: mealRows } = await supabase
+      .from("meal_logs").select("*").eq("user_id", userId).order("date", { ascending: true });
 
     setConfig(cfg);
     setLogs((logRows || []).map(mapLogRow));
     setBwLogs((bwRows || []).map(mapBwRow));
     setActivityLogs((activityRows || []).map(mapActivityRow));
     setCheckins((checkinRows || []).map(mapCheckinRow));
+    setNutritionTargets(mapTargetsRow(targetsRow));
+    setMealLogs((mealRows || []).map(mapMealRow));
     setDataLoaded(true);
   }
 
@@ -358,6 +387,47 @@ export default function App() {
     }
   }
 
+  async function saveTargets(entry) {
+    const row = {
+      user_id: session.user.id,
+      calories: entry.calories ?? null,
+      protein: entry.protein ?? null,
+      carbs: entry.carbs ?? null,
+      fat: entry.fat ?? null,
+      updated_at: new Date().toISOString(),
+    };
+    const { data, error } = await supabase
+      .from("nutrition_targets").upsert(row, { onConflict: "user_id" }).select().single();
+    if (!error && data) {
+      setNutritionTargets(mapTargetsRow(data));
+      showToast("Objetivos guardados");
+    }
+  }
+
+  async function addMeal(entry) {
+    const row = {
+      user_id: session.user.id,
+      date: entry.date,
+      meal_type: entry.mealType || null,
+      name: entry.name,
+      calories: entry.calories ?? null,
+      protein: entry.protein ?? null,
+      carbs: entry.carbs ?? null,
+      fat: entry.fat ?? null,
+      notes: entry.notes || null,
+    };
+    const { data, error } = await supabase.from("meal_logs").insert(row).select().single();
+    if (!error && data) {
+      setMealLogs((prev) => [...prev, mapMealRow(data)]);
+      showToast("Comida guardada");
+    }
+  }
+
+  async function deleteMeal(id) {
+    await supabase.from("meal_logs").delete().eq("id", id);
+    setMealLogs((prev) => prev.filter((m) => m.id !== id));
+  }
+
   function lastEntryFor(exerciseId) {
     const matches = logs.filter((l) => l.exerciseId === exerciseId).sort((a, b) => (a.date < b.date ? 1 : -1));
     return matches[0] || null;
@@ -459,13 +529,30 @@ export default function App() {
             <ProgresoTab logs={logs} bwLogs={bwLogs} addBw={addBw} config={config} allExercises={allExercises} />
           ) : tab === "historial" ? (
             <HistorialTab logs={logs} deleteLog={deleteLog} updateLog={updateLog} />
-          ) : (
+          ) : tab === "mas" ? (
             <MasTab
               activityLogs={activityLogs}
               addActivity={addActivity}
               deleteActivity={deleteActivity}
               checkins={checkins}
               saveCheckin={saveCheckin}
+            />
+          ) : tab === "nutricion" ? (
+            <NutricionTab
+              targets={nutritionTargets}
+              saveTargets={saveTargets}
+              mealLogs={mealLogs}
+              addMeal={addMeal}
+              deleteMeal={deleteMeal}
+            />
+          ) : (
+            <CoachTab
+              bwLogs={bwLogs}
+              logs={logs}
+              activityLogs={activityLogs}
+              checkins={checkins}
+              mealLogs={mealLogs}
+              targets={nutritionTargets}
             />
           )}
         </main>
@@ -477,6 +564,8 @@ export default function App() {
           <TabBtn icon={<TrendingUp size={20} />} label="Progreso" active={tab === "progreso"} onClick={() => setTab("progreso")} />
           <TabBtn icon={<History size={20} />} label="Historial" active={tab === "historial"} onClick={() => setTab("historial")} />
           <TabBtn icon={<Activity size={20} />} label="Más" active={tab === "mas"} onClick={() => setTab("mas")} />
+          <TabBtn icon={<Utensils size={20} />} label="Nutrición" active={tab === "nutricion"} onClick={() => setTab("nutricion")} />
+          <TabBtn icon={<Sparkles size={20} />} label="Coach" active={tab === "coach"} onClick={() => setTab("coach")} />
         </nav>
       </div>
     </div>
@@ -1275,6 +1364,403 @@ function CheckinForm({ existing, onSave }) {
 }
 
 // ---------------------------------------------------------------------------
+function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal }) {
+  const todaysMeals = useMemo(
+    () => mealLogs.filter((m) => m.date === todayISO()),
+    [mealLogs]
+  );
+  const totals = useMemo(
+    () =>
+      todaysMeals.reduce(
+        (acc, m) => ({
+          calories: acc.calories + (m.calories || 0),
+          protein: acc.protein + (m.protein || 0),
+          carbs: acc.carbs + (m.carbs || 0),
+          fat: acc.fat + (m.fat || 0),
+        }),
+        { calories: 0, protein: 0, carbs: 0, fat: 0 }
+      ),
+    [todaysMeals]
+  );
+
+  return (
+    <div className="tabpane">
+      <TargetsCard targets={targets} onSave={saveTargets} />
+
+      <section className="card">
+        <div className="section-title">Hoy</div>
+        <div className="section-sub">Comidas registradas vs. objetivo diario</div>
+        {targets ? (
+          <div className="cardlist">
+            <MacroBar label="Kcal" value={totals.calories} target={targets.calories} unit="" colorClass="bar-accent" />
+            <MacroBar label="Prot" value={totals.protein} target={targets.protein} unit="g" colorClass="bar-accent2" />
+            <MacroBar label="Carb" value={totals.carbs} target={targets.carbs} unit="g" colorClass="bar-accent" />
+            <MacroBar label="Gras" value={totals.fat} target={targets.fat} unit="g" colorClass="bar-accent2" />
+          </div>
+        ) : (
+          <div className="empty small">Definí tus objetivos arriba para ver el avance del día.</div>
+        )}
+      </section>
+
+      <MealForm onSave={addMeal} />
+
+      {todaysMeals.length > 0 && (
+        <section className="card">
+          <div className="section-title">Comidas de hoy</div>
+          <div className="cardlist" style={{ marginTop: 8 }}>
+            {todaysMeals.map((m) => (
+              <div key={m.id} className="hist-row">
+                <div>
+                  <div className="hist-ex">{m.mealType ? `${m.mealType} · ` : ""}{m.name}</div>
+                  <div className="hist-detail mono">
+                    {m.calories != null ? `${fmtNum(m.calories)} kcal` : "kcal ?"}
+                    {m.protein != null ? ` · P ${fmtNum(m.protein)}g` : ""}
+                    {m.carbs != null ? ` · C ${fmtNum(m.carbs)}g` : ""}
+                    {m.fat != null ? ` · G ${fmtNum(m.fat)}g` : ""}
+                  </div>
+                  {m.notes && <div className="hist-detail" style={{ marginTop: 2 }}>{m.notes}</div>}
+                </div>
+                <div className="hist-actions">
+                  <button className="del-btn" onClick={() => deleteMeal(m.id)}><Trash2 size={15} /></button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
+function MacroBar({ label, value, target, unit, colorClass }) {
+  const scale = target && target > 0 ? target : Math.max(value, 1);
+  const pct = Math.min(100, (value / scale) * 100);
+  return (
+    <div className="bar-row">
+      <span className="bar-label mono">{label}</span>
+      <div className="bar-track"><div className={"bar-fill " + colorClass} style={{ width: `${pct}%` }} /></div>
+      <span className="bar-value mono" style={{ width: 84 }}>
+        {fmtNum(value)}{unit}{target ? ` / ${fmtNum(target)}${unit}` : ""}
+      </span>
+    </div>
+  );
+}
+
+function TargetsCard({ targets, onSave }) {
+  const [calories, setCalories] = useState(targets?.calories != null ? toInput(targets.calories) : "");
+  const [protein, setProtein] = useState(targets?.protein != null ? toInput(targets.protein) : "");
+  const [carbs, setCarbs] = useState(targets?.carbs != null ? toInput(targets.carbs) : "");
+  const [fat, setFat] = useState(targets?.fat != null ? toInput(targets.fat) : "");
+  const [editing, setEditing] = useState(!targets);
+
+  function submit() {
+    onSave({ calories: toNum(calories), protein: toNum(protein), carbs: toNum(carbs), fat: toNum(fat) });
+    setEditing(false);
+  }
+
+  if (!editing && targets) {
+    return (
+      <section className="card">
+        <button className="card-head" onClick={() => setEditing(true)}>
+          <div>
+            <div className="section-title" style={{ marginBottom: 2 }}>Objetivos diarios</div>
+            <div className="section-sub mono" style={{ marginBottom: 0 }}>
+              {fmtNum(targets.calories)} kcal · P {fmtNum(targets.protein)}g · C {fmtNum(targets.carbs)}g · G {fmtNum(targets.fat)}g
+            </div>
+          </div>
+          <div className="card-icon"><Pencil size={15} /></div>
+        </button>
+      </section>
+    );
+  }
+
+  return (
+    <section className="card">
+      <div className="section-title">Objetivos diarios</div>
+      <div className="section-sub">Calorías y macros — se comparan contra lo que vayas registrando</div>
+      <div className="side-grid two">
+        <NumInput placeholder="Calorías (kcal)" decimal={false} value={calories} onChange={setCalories} />
+        <NumInput placeholder="Proteína (g)" value={protein} onChange={setProtein} />
+      </div>
+      <div className="side-grid two" style={{ marginTop: 10 }}>
+        <NumInput placeholder="Carbohidratos (g)" value={carbs} onChange={setCarbs} />
+        <NumInput placeholder="Grasas (g)" value={fat} onChange={setFat} />
+      </div>
+      <button className="save-btn" onClick={submit}>Guardar objetivos</button>
+    </section>
+  );
+}
+
+function MealForm({ onSave }) {
+  const [mealType, setMealType] = useState(null);
+  const [name, setName] = useState("");
+  const [calories, setCalories] = useState("");
+  const [protein, setProtein] = useState("");
+  const [carbs, setCarbs] = useState("");
+  const [fat, setFat] = useState("");
+  const [notes, setNotes] = useState("");
+
+  function submit() {
+    if (!name.trim()) return;
+    onSave({
+      date: todayISO(),
+      mealType,
+      name: name.trim(),
+      calories: toNum(calories),
+      protein: toNum(protein),
+      carbs: toNum(carbs),
+      fat: toNum(fat),
+      notes: notes.trim(),
+    });
+    setMealType(null); setName(""); setCalories(""); setProtein(""); setCarbs(""); setFat(""); setNotes("");
+  }
+
+  return (
+    <section className="card">
+      <div className="section-title">Nueva comida</div>
+      <div className="chiprow wrap" style={{ marginBottom: 10 }}>
+        {MEAL_TYPES.map((t) => (
+          <button key={t} className={"chip" + (mealType === t ? " chip-active" : "")} onClick={() => setMealType(t)}>{t}</button>
+        ))}
+      </div>
+      <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Qué comiste" />
+      <div className="side-grid two" style={{ marginTop: 10 }}>
+        <NumInput placeholder="Calorías (kcal)" decimal={false} value={calories} onChange={setCalories} />
+        <NumInput placeholder="Proteína (g)" value={protein} onChange={setProtein} />
+      </div>
+      <div className="side-grid two" style={{ marginTop: 10 }}>
+        <NumInput placeholder="Carbohidratos (g)" value={carbs} onChange={setCarbs} />
+        <NumInput placeholder="Grasas (g)" value={fat} onChange={setFat} />
+      </div>
+      <input className="input" style={{ marginTop: 10 }} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notas (opcional)" />
+      <button className="save-btn" onClick={submit}>Guardar comida</button>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Motor de decisiones (Fase 4): reglas fijas, sin IA y sin costo. Corre en el
+// cliente cada vez que se abre la pestaña, comparando la ultima semana contra
+// la anterior sobre los datos que ya existen en Supabase. No reemplaza el
+// analisis mas fino que se puede pedir en el chat — es el chequeo automatico
+// de todos los dias.
+function daysAgoISO(n) {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  const off = d.getTimezoneOffset();
+  const local = new Date(d.getTime() - off * 60000);
+  return local.toISOString().slice(0, 10);
+}
+function avg(arr) {
+  const vals = arr.filter((v) => v != null && Number.isFinite(v));
+  if (!vals.length) return null;
+  return vals.reduce((a, b) => a + b, 0) / vals.length;
+}
+function inWindow(dateISO, fromISO, toISOEnd) {
+  return dateISO >= fromISO && dateISO <= toISOEnd;
+}
+
+function computeCoach({ bwLogs, logs, activityLogs, checkins, mealLogs, targets }) {
+  const today = todayISO();
+  const w1Start = daysAgoISO(6); // esta semana: hoy y los 6 dias anteriores
+  const w2Start = daysAgoISO(13);
+  const w2End = daysAgoISO(7); // semana anterior
+
+  const thisWeekBw = bwLogs.filter((b) => inWindow(b.date, w1Start, today));
+  const prevWeekBw = bwLogs.filter((b) => inWindow(b.date, w2Start, w2End));
+  const weightNow = avg(thisWeekBw.map((b) => b.weight));
+  const weightPrev = avg(prevWeekBw.map((b) => b.weight));
+  const waistNow = avg(thisWeekBw.map((b) => b.waist));
+  const waistPrev = avg(prevWeekBw.map((b) => b.waist));
+
+  const thisWeekSets = logs.filter((l) => inWindow(l.date, w1Start, today));
+  const prevWeekSets = logs.filter((l) => inWindow(l.date, w2Start, w2End));
+  const rirNow = avg(thisWeekSets.map((l) => l.rir));
+  const rirPrev = avg(prevWeekSets.map((l) => l.rir));
+  const volumeNow = thisWeekSets.length;
+  const volumePrev = prevWeekSets.length;
+
+  const thisWeekAct = activityLogs.filter((a) => inWindow(a.date, w1Start, today));
+  const prevWeekAct = activityLogs.filter((a) => inWindow(a.date, w2Start, w2End));
+  const minutesNow = thisWeekAct.reduce((s, a) => s + (a.durationMin || 0), 0);
+  const minutesPrev = prevWeekAct.reduce((s, a) => s + (a.durationMin || 0), 0);
+
+  const thisWeekChk = checkins.filter((c) => inWindow(c.date, w1Start, today));
+  const energyNow = avg(thisWeekChk.map((c) => c.energy));
+  const sorenessNow = avg(thisWeekChk.map((c) => c.soreness));
+  const painFlags = thisWeekChk.flatMap((c) => Object.entries(c.pain || {}).filter(([, v]) => v >= 6));
+
+  const thisWeekMeals = mealLogs.filter((m) => inWindow(m.date, w1Start, today));
+  const daysWithMeals = new Set(thisWeekMeals.map((m) => m.date)).size;
+  const caloriesAvg = avg(
+    Array.from(new Set(thisWeekMeals.map((m) => m.date))).map((d) =>
+      thisWeekMeals.filter((m) => m.date === d).reduce((s, m) => s + (m.calories || 0), 0)
+    )
+  );
+
+  const blocks = [];
+
+  // Composicion corporal
+  if (weightNow != null && weightPrev != null) {
+    const dW = Number((weightNow - weightPrev).toFixed(2));
+    const pct = (dW / weightPrev) * 100;
+    blocks.push({
+      key: "peso",
+      label: "Peso corporal",
+      status: dW < -0.05 ? "down" : dW > 0.05 ? "up" : "flat",
+      detail: `${fmtNum(weightPrev)} → ${fmtNum(weightNow)} kg (${dW <= 0 ? "" : "+"}${fmtNum(dW)} kg, ${fmtNum(Number(pct.toFixed(1)))}%/sem)`,
+    });
+  } else {
+    blocks.push({ key: "peso", label: "Peso corporal", status: "na", detail: "Necesito 2 semanas de datos para comparar." });
+  }
+  if (waistNow != null && waistPrev != null) {
+    const dC = Number((waistNow - waistPrev).toFixed(2));
+    blocks.push({
+      key: "cintura",
+      label: "Cintura",
+      status: dC < -0.1 ? "down" : dC > 0.1 ? "up" : "flat",
+      detail: `${fmtNum(waistPrev)} → ${fmtNum(waistNow)} cm (${dC <= 0 ? "" : "+"}${fmtNum(dC)} cm)`,
+    });
+  }
+
+  // Entrenamiento
+  if (volumeNow > 0 || volumePrev > 0) {
+    blocks.push({
+      key: "entreno",
+      label: "Entrenamiento",
+      status: volumeNow > volumePrev ? "up" : volumeNow < volumePrev ? "down" : "flat",
+      detail:
+        `${volumeNow} sets esta semana (antes ${volumePrev})` +
+        (rirNow != null ? ` · RIR prom. ${fmtNum(Number(rirNow.toFixed(1)))}` : ""),
+    });
+  } else {
+    blocks.push({ key: "entreno", label: "Entrenamiento", status: "na", detail: "No hay sets cargados esta semana." });
+  }
+
+  // Actividad extra / cardio
+  blocks.push({
+    key: "actividad",
+    label: "Actividad extra",
+    status: minutesNow > minutesPrev ? "up" : minutesNow < minutesPrev ? "down" : "flat",
+    detail: `${minutesNow} min esta semana (antes ${minutesPrev})`,
+  });
+
+  // Recuperacion
+  if (energyNow != null || sorenessNow != null) {
+    const bad = (energyNow != null && energyNow <= 2.2) || (sorenessNow != null && sorenessNow >= 4);
+    blocks.push({
+      key: "recuperacion",
+      label: "Recuperación",
+      status: bad ? "down" : "flat",
+      detail:
+        (energyNow != null ? `Energía prom. ${fmtNum(Number(energyNow.toFixed(1)))}/5` : "Sin dato de energía") +
+        (sorenessNow != null ? ` · Fatiga ${fmtNum(Number(sorenessNow.toFixed(1)))}/5` : "") +
+        (painFlags.length ? ` · dolor alto en ${painFlags.length} chequeo(s)` : ""),
+    });
+  } else {
+    blocks.push({ key: "recuperacion", label: "Recuperación", status: "na", detail: "Sin chequeos diarios esta semana." });
+  }
+
+  // Nutricion
+  if (targets?.calories && daysWithMeals > 0) {
+    const gap = caloriesAvg != null ? Math.round(caloriesAvg - targets.calories) : null;
+    blocks.push({
+      key: "nutricion",
+      label: "Nutrición",
+      status: gap == null ? "na" : Math.abs(gap) <= 150 ? "flat" : gap > 0 ? "up" : "down",
+      detail:
+        `${daysWithMeals}/7 días registrados` +
+        (caloriesAvg != null ? ` · ${fmtNum(Math.round(caloriesAvg))} kcal prom. (objetivo ${fmtNum(targets.calories)})` : ""),
+    });
+  } else {
+    blocks.push({
+      key: "nutricion",
+      label: "Nutrición",
+      status: "na",
+      detail: targets?.calories ? "Todavía no registraste comidas esta semana." : "Definí un objetivo de calorías en Nutrición para activar este bloque.",
+    });
+  }
+
+  // Decision final: reglas en orden de prioridad.
+  let decision = "Seguí cargando datos — con una semana más el motor ya puede comparar tendencias.";
+  let tone = "info";
+
+  const recov = blocks.find((b) => b.key === "recuperacion");
+  const peso = blocks.find((b) => b.key === "peso");
+  const nutri = blocks.find((b) => b.key === "nutricion");
+  const entreno = blocks.find((b) => b.key === "entreno");
+
+  const hasTwoWeeks = peso.status !== "na";
+
+  if (recov && recov.status === "down" && (sorenessNow >= 4.5 || painFlags.length >= 2)) {
+    decision = "Fatiga y/o dolor altos esta semana. Bajá el volumen o meté una semana de descarga antes de seguir progresando cargas.";
+    tone = "warn";
+  } else if (hasTwoWeeks) {
+    const dW = weightNow - weightPrev;
+    const pctWeek = (dW / weightPrev) * 100;
+    if (dW >= -0.05) {
+      if (nutri && nutri.status === "up") {
+        decision = "El peso no bajó y estás por encima del objetivo calórico. Ajustá ~150-200 kcal menos o sumá cardio/pasos esta semana.";
+        tone = "warn";
+      } else {
+        decision = "El peso se estancó. Si venís comiendo en línea con el objetivo, bajá ~100-150 kcal o subí actividad; si no tenés objetivo cargado, definilo en Nutrición para que el motor pueda distinguir estancamiento real de falta de datos.";
+        tone = "warn";
+      }
+    } else if (pctWeek < -1) {
+      decision = "Estás bajando más rápido de lo ideal (más de 1%/semana). Subí ~150-200 kcal para frenar la pérdida de masa muscular.";
+      tone = "warn";
+    } else {
+      decision = "Progreso en línea: peso bajando de forma sostenida" + (entreno && entreno.status !== "down" ? " y entrenamiento estable o en aumento." : ".") + " Mantené el plan actual.";
+      tone = "ok";
+    }
+  }
+
+  return { blocks, decision, tone };
+}
+
+function StatusDot({ status }) {
+  const map = { up: "●", down: "●", flat: "●", na: "○" };
+  const cls = { up: "dot-up", down: "dot-down", flat: "dot-flat", na: "dot-na" };
+  return <span className={"status-dot " + cls[status]}>{map[status]}</span>;
+}
+
+function CoachTab({ bwLogs, logs, activityLogs, checkins, mealLogs, targets }) {
+  const result = useMemo(
+    () => computeCoach({ bwLogs, logs, activityLogs, checkins, mealLogs, targets }),
+    [bwLogs, logs, activityLogs, checkins, mealLogs, targets]
+  );
+
+  return (
+    <div className="tabpane">
+      <section className={"card decision-card tone-" + result.tone}>
+        <div className="section-title" style={{ marginBottom: 6 }}>Decisión de la semana</div>
+        <div className="decision-text">{result.decision}</div>
+      </section>
+
+      <section className="card">
+        <div className="section-title">Panel de control</div>
+        <div className="section-sub">Esta semana (últimos 7 días) vs. la anterior — se recalcula solo, sin costo</div>
+        <div className="cardlist">
+          {result.blocks.map((b) => (
+            <div key={b.key} className="coach-row">
+              <div className="coach-row-head">
+                <StatusDot status={b.status} />
+                <span className="coach-label">{b.label}</span>
+              </div>
+              <div className="hist-detail mono">{b.detail}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <div className="empty small">
+        Motor de reglas fijo (sin IA, sin costo, corre siempre). Si querés un análisis más fino antes de una decisión grande, pedímelo en el chat con estos mismos datos.
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Color de la segunda serie de datos. El verde #6E9B8B venia cumpliendo dos
 // papeles a la vez -- serie de datos y estado positivo -- y contra el dorado de
 // marca quedaba en dE 13,4, por debajo del piso de 15: costaba distinguir
@@ -1411,5 +1897,24 @@ const CSS = `
 .pain-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 6px; }
 .pain-field { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .pain-field .target-input { width: 56px; text-align: center; padding: 8px 6px; }
+
+.chiprow.wrap { flex-wrap: wrap; }
+.chiprow.wrap .chip { flex: 0 0 auto; padding: 7px 12px; }
+
+.decision-card { border: 1px solid rgba(237,234,227,0.06); }
+.decision-card.tone-ok { border-color: rgba(110,155,139,0.4); background: linear-gradient(0deg, rgba(110,155,139,0.08), rgba(110,155,139,0.08)), #242A31; }
+.decision-card.tone-warn { border-color: rgba(192,103,58,0.4); background: linear-gradient(0deg, rgba(192,103,58,0.08), rgba(192,103,58,0.08)), #242A31; }
+.decision-card.tone-info { border-color: rgba(192,138,62,0.35); }
+.decision-text { font-size: 14px; line-height: 1.5; }
+
+.coach-row { display: flex; flex-direction: column; gap: 4px; padding: 10px 0; border-top: 1px solid rgba(237,234,227,0.06); }
+.coach-row:first-child { border-top: none; padding-top: 2px; }
+.coach-row-head { display: flex; align-items: center; gap: 8px; }
+.coach-label { font-size: 13.5px; font-weight: 600; }
+.status-dot { font-size: 11px; line-height: 1; }
+.dot-up { color: #C08A3E; }
+.dot-down { color: #0092B0; }
+.dot-flat { color: #8B93A0; }
+.dot-na { color: #5C6470; }
 
 `;
