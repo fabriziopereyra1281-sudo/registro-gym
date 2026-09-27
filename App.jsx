@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import {
-  Dumbbell, TrendingUp, History, Plus, Trash2, ChevronDown, X, Check, Pencil, LogOut,
+  Dumbbell, TrendingUp, History, Plus, Trash2, ChevronDown, X, Check, Pencil, LogOut, Activity,
 } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -142,11 +142,45 @@ function mapLogRow(row) {
     repsR: row.reps_r,
     weightL: row.weight_l,
     repsL: row.reps_l,
+    rir: row.rir,
   };
 }
 function mapBwRow(row) {
   return { id: row.id, date: row.date, weight: row.weight, waist: row.waist };
 }
+function mapActivityRow(row) {
+  return {
+    id: row.id,
+    date: row.date,
+    name: row.name,
+    durationMin: row.duration_min,
+    intensityRpe: row.intensity_rpe,
+    usedWatch: row.used_watch,
+    avgHr: row.avg_hr,
+    notes: row.notes,
+  };
+}
+function mapCheckinRow(row) {
+  return {
+    id: row.id,
+    date: row.date,
+    energy: row.energy,
+    soreness: row.soreness,
+    pain: row.pain || {},
+    notes: row.notes,
+  };
+}
+
+const PAIN_ZONES = [
+  { key: "codo_d", label: "Codo der." },
+  { key: "codo_i", label: "Codo izq." },
+  { key: "hombro_d", label: "Hombro der." },
+  { key: "hombro_i", label: "Hombro izq." },
+  { key: "rodilla_d", label: "Rodilla der." },
+  { key: "rodilla_i", label: "Rodilla izq." },
+  { key: "lumbar", label: "Lumbar" },
+  { key: "talon", label: "Talón" },
+];
 
 // ---------------------------------------------------------------------------
 export default function App() {
@@ -156,6 +190,8 @@ export default function App() {
   const [config, setConfig] = useState(null);
   const [logs, setLogs] = useState([]);
   const [bwLogs, setBwLogs] = useState([]);
+  const [activityLogs, setActivityLogs] = useState([]);
+  const [checkins, setCheckins] = useState([]);
   const [dataLoaded, setDataLoaded] = useState(false);
   const [openForm, setOpenForm] = useState(null);
   const [editMode, setEditMode] = useState(false);
@@ -179,6 +215,8 @@ export default function App() {
         setConfig(null);
         setLogs([]);
         setBwLogs([]);
+        setActivityLogs([]);
+        setCheckins([]);
         setDataLoaded(false);
       }
     });
@@ -201,10 +239,16 @@ export default function App() {
       .from("workout_logs").select("*").eq("user_id", userId).order("date", { ascending: true });
     const { data: bwRows } = await supabase
       .from("bodyweight_logs").select("*").eq("user_id", userId).order("date", { ascending: true });
+    const { data: activityRows } = await supabase
+      .from("activity_logs").select("*").eq("user_id", userId).order("date", { ascending: true });
+    const { data: checkinRows } = await supabase
+      .from("daily_checkins").select("*").eq("user_id", userId).order("date", { ascending: true });
 
     setConfig(cfg);
     setLogs((logRows || []).map(mapLogRow));
     setBwLogs((bwRows || []).map(mapBwRow));
+    setActivityLogs((activityRows || []).map(mapActivityRow));
+    setCheckins((checkinRows || []).map(mapCheckinRow));
     setDataLoaded(true);
   }
 
@@ -230,6 +274,7 @@ export default function App() {
       reps_r: entry.repsR ?? null,
       weight_l: entry.weightL ?? null,
       reps_l: entry.repsL ?? null,
+      rir: entry.rir ?? null,
     };
     const { data, error } = await supabase.from("workout_logs").insert(row).select().single();
     if (!error && data) {
@@ -246,6 +291,7 @@ export default function App() {
       reps_r: patch.repsR ?? null,
       weight_l: patch.weightL ?? null,
       reps_l: patch.repsL ?? null,
+      rir: patch.rir ?? null,
     };
     const { data, error } = await supabase.from("workout_logs").update(row).eq("id", id).select().single();
     if (!error && data) {
@@ -265,6 +311,50 @@ export default function App() {
     if (!error && data) {
       setBwLogs((prev) => [...prev, mapBwRow(data)]);
       showToast("Peso registrado");
+    }
+  }
+
+  async function addActivity(entry) {
+    const row = {
+      user_id: session.user.id,
+      date: entry.date,
+      name: entry.name,
+      duration_min: entry.durationMin ?? null,
+      intensity_rpe: entry.intensityRpe ?? null,
+      used_watch: !!entry.usedWatch,
+      avg_hr: entry.avgHr ?? null,
+      notes: entry.notes || null,
+    };
+    const { data, error } = await supabase.from("activity_logs").insert(row).select().single();
+    if (!error && data) {
+      setActivityLogs((prev) => [...prev, mapActivityRow(data)]);
+      showToast("Actividad guardada");
+    }
+  }
+
+  async function deleteActivity(id) {
+    await supabase.from("activity_logs").delete().eq("id", id);
+    setActivityLogs((prev) => prev.filter((a) => a.id !== id));
+  }
+
+  async function saveCheckin(entry) {
+    const row = {
+      user_id: session.user.id,
+      date: entry.date,
+      energy: entry.energy ?? null,
+      soreness: entry.soreness ?? null,
+      pain: entry.pain || {},
+      notes: entry.notes || null,
+      updated_at: new Date().toISOString(),
+    };
+    const { data, error } = await supabase
+      .from("daily_checkins").upsert(row, { onConflict: "user_id,date" }).select().single();
+    if (!error && data) {
+      setCheckins((prev) => {
+        const rest = prev.filter((c) => c.date !== data.date);
+        return [...rest, mapCheckinRow(data)].sort((a, b) => (a.date < b.date ? -1 : 1));
+      });
+      showToast("Chequeo guardado");
     }
   }
 
@@ -367,8 +457,16 @@ export default function App() {
             />
           ) : tab === "progreso" ? (
             <ProgresoTab logs={logs} bwLogs={bwLogs} addBw={addBw} config={config} allExercises={allExercises} />
-          ) : (
+          ) : tab === "historial" ? (
             <HistorialTab logs={logs} deleteLog={deleteLog} updateLog={updateLog} />
+          ) : (
+            <MasTab
+              activityLogs={activityLogs}
+              addActivity={addActivity}
+              deleteActivity={deleteActivity}
+              checkins={checkins}
+              saveCheckin={saveCheckin}
+            />
           )}
         </main>
 
@@ -378,6 +476,7 @@ export default function App() {
           <TabBtn icon={<Dumbbell size={20} />} label="Hoy" active={tab === "hoy"} onClick={() => setTab("hoy")} />
           <TabBtn icon={<TrendingUp size={20} />} label="Progreso" active={tab === "progreso"} onClick={() => setTab("progreso")} />
           <TabBtn icon={<History size={20} />} label="Historial" active={tab === "historial"} onClick={() => setTab("historial")} />
+          <TabBtn icon={<Activity size={20} />} label="Más" active={tab === "mas"} onClick={() => setTab("mas")} />
         </nav>
       </div>
     </div>
@@ -625,31 +724,34 @@ function ExerciseCard({ exercise, day, last, isOpen, onToggle, onSave }) {
   const [repsR, setRepsR] = useState("");
   const [weightL, setWeightL] = useState("");
   const [repsL, setRepsL] = useState("");
+  const [rir, setRir] = useState("");
 
   const target = targetText(exercise);
 
   function lastLabel() {
     if (!last) return "Sin registros todavía";
+    const rirTxt = last.rir != null ? ` · RIR ${last.rir}` : "";
     if (exercise.unilateral) {
-      return `Último — Der: ${fmtNum(last.weightR)}kg×${fmtNum(last.repsR)} · Izq: ${fmtNum(last.weightL)}kg×${fmtNum(last.repsL)}`;
+      return `Último — Der: ${fmtNum(last.weightR)}kg×${fmtNum(last.repsR)} · Izq: ${fmtNum(last.weightL)}kg×${fmtNum(last.repsL)}${rirTxt}`;
     }
-    return `Último: ${fmtNum(last.weight)}kg × ${fmtNum(last.reps)} reps · ${fmtShort(last.date)}`;
+    return `Último: ${fmtNum(last.weight)}kg × ${fmtNum(last.reps)} reps${rirTxt} · ${fmtShort(last.date)}`;
   }
 
   function submit() {
+    const rirNum = toNum(rir);
     if (exercise.unilateral) {
       const wR = toNum(weightR), wL = toNum(weightL);
       if (wR == null && wL == null) return;
       onSave({
         date: todayISO(), day, exerciseId: exercise.id, exerciseName: exercise.name, unilateral: true,
-        weightR: wR, repsR: toNum(repsR), weightL: wL, repsL: toNum(repsL),
+        weightR: wR, repsR: toNum(repsR), weightL: wL, repsL: toNum(repsL), rir: rirNum,
       });
-      setWeightR(""); setRepsR(""); setWeightL(""); setRepsL("");
+      setWeightR(""); setRepsR(""); setWeightL(""); setRepsL(""); setRir("");
     } else {
       const w = toNum(weight);
       if (w == null) return;
-      onSave({ date: todayISO(), day, exerciseId: exercise.id, exerciseName: exercise.name, unilateral: false, weight: w, reps: toNum(reps) });
-      setWeight(""); setReps("");
+      onSave({ date: todayISO(), day, exerciseId: exercise.id, exerciseName: exercise.name, unilateral: false, weight: w, reps: toNum(reps), rir: rirNum });
+      setWeight(""); setReps(""); setRir("");
     }
   }
 
@@ -685,6 +787,7 @@ function ExerciseCard({ exercise, day, last, isOpen, onToggle, onSave }) {
               <NumInput placeholder="Reps" decimal={false} value={reps} onChange={setReps} />
             </div>
           )}
+          <NumInput placeholder="RIR (opcional, 0-10)" decimal={false} value={rir} onChange={setRir} />
           <button className="save-btn" onClick={submit}>Guardar set</button>
         </div>
       )}
@@ -922,6 +1025,7 @@ function HistorialTab({ logs, deleteLog, updateLog }) {
                       {l.unilateral
                         ? `Der ${fmtNum(l.weightR)}kg×${fmtNum(l.repsR)} · Izq ${fmtNum(l.weightL)}kg×${fmtNum(l.repsL)}`
                         : `${fmtNum(l.weight)}kg${l.reps ? ` × ${l.reps} reps` : ""}`}
+                      {l.rir != null ? ` · RIR ${l.rir}` : ""}
                     </div>
                   </div>
                   <div className="hist-actions">
@@ -945,16 +1049,18 @@ function HistEditRow({ log, onCancel, onSave }) {
   const [repsR, setRepsR] = useState(toInput(log.repsR));
   const [weightL, setWeightL] = useState(toInput(log.weightL));
   const [repsL, setRepsL] = useState(toInput(log.repsL));
+  const [rir, setRir] = useState(toInput(log.rir));
 
   function submit() {
+    const rirNum = toNum(rir);
     if (log.unilateral) {
       const wR = toNum(weightR), wL = toNum(weightL);
       if (wR == null && wL == null) return;
-      onSave({ weightR: wR, repsR: toNum(repsR), weightL: wL, repsL: toNum(repsL) });
+      onSave({ weightR: wR, repsR: toNum(repsR), weightL: wL, repsL: toNum(repsL), rir: rirNum });
     } else {
       const w = toNum(weight);
       if (w == null) return;
-      onSave({ weight: w, reps: toNum(reps) });
+      onSave({ weight: w, reps: toNum(reps), rir: rirNum });
     }
   }
 
@@ -987,12 +1093,184 @@ function HistEditRow({ log, onCancel, onSave }) {
             </div>
           </div>
         )}
+        <NumInput placeholder="RIR (opcional, 0-10)" decimal={false} value={rir} onChange={setRir} />
         <div className="edit-actions">
           <button className="cancel-btn" onClick={onCancel}>Cancelar</button>
           <button className="save-btn" onClick={submit}>Guardar cambios</button>
         </div>
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+const RPE_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+const ENERGY_LABELS = { 1: "Muy baja", 2: "Baja", 3: "Media", 4: "Buena", 5: "Muy buena" };
+
+function MasTab({ activityLogs, addActivity, deleteActivity, checkins, saveCheckin }) {
+  const todaysCheckin = checkins.find((c) => c.date === todayISO()) || null;
+  const recentActivities = useMemo(
+    () => [...activityLogs].sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 8),
+    [activityLogs]
+  );
+
+  return (
+    <div className="tabpane">
+      <ActivityForm onSave={addActivity} />
+
+      {recentActivities.length > 0 && (
+        <section className="card">
+          <div className="section-title">Actividades recientes</div>
+          <div className="cardlist" style={{ marginTop: 8 }}>
+            {recentActivities.map((a) => (
+              <div key={a.id} className="hist-row">
+                <div>
+                  <div className="hist-ex">{a.name}</div>
+                  <div className="hist-detail mono">
+                    {fmtShort(a.date)} · {a.durationMin ? `${a.durationMin} min` : "sin duración"}
+                    {a.intensityRpe != null ? ` · RPE ${a.intensityRpe}` : ""}
+                    {a.usedWatch ? " · con reloj" : " · estimado"}
+                  </div>
+                  {a.notes && <div className="hist-detail" style={{ marginTop: 2 }}>{a.notes}</div>}
+                </div>
+                <div className="hist-actions">
+                  <button className="del-btn" onClick={() => deleteActivity(a.id)}><Trash2 size={15} /></button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <CheckinForm existing={todaysCheckin} onSave={saveCheckin} />
+    </div>
+  );
+}
+
+function ActivityForm({ onSave }) {
+  const [name, setName] = useState("");
+  const [duration, setDuration] = useState("");
+  const [rpe, setRpe] = useState(null);
+  const [usedWatch, setUsedWatch] = useState(false);
+  const [avgHr, setAvgHr] = useState("");
+  const [notes, setNotes] = useState("");
+
+  function quickPick(n) {
+    setName(n);
+  }
+
+  function submit() {
+    if (!name.trim()) return;
+    onSave({
+      date: todayISO(),
+      name: name.trim(),
+      durationMin: toNum(duration),
+      intensityRpe: rpe,
+      usedWatch,
+      avgHr: usedWatch ? toNum(avgHr) : null,
+      notes: notes.trim(),
+    });
+    setName(""); setDuration(""); setRpe(null); setUsedWatch(false); setAvgHr(""); setNotes("");
+  }
+
+  return (
+    <section className="card">
+      <div className="section-title">Otra actividad</div>
+      <div className="section-sub">Boxeo, krav maga, cardio suelto — lo que no es parte del split de pesas</div>
+
+      <div className="chiprow" style={{ marginBottom: 10 }}>
+        {["Boxeo", "Krav Maga", "Cardio"].map((n) => (
+          <button key={n} className={"chip" + (name === n ? " chip-active" : "")} onClick={() => quickPick(n)}>{n}</button>
+        ))}
+      </div>
+      <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Nombre de la actividad" />
+
+      <div className="side-grid two" style={{ marginTop: 10 }}>
+        <NumInput placeholder="Duración (min)" decimal={false} value={duration} onChange={setDuration} />
+        <label className="uni-toggle" style={{ justifyContent: "center", border: "1px solid rgba(237,234,227,0.14)", borderRadius: 10, padding: "10px 0" }}>
+          <input type="checkbox" checked={usedWatch} onChange={(e) => setUsedWatch(e.target.checked)} />
+          <span>Llevé el reloj</span>
+        </label>
+      </div>
+
+      {usedWatch && (
+        <div style={{ marginTop: 10 }}>
+          <NumInput placeholder="FC promedio (opcional)" decimal={false} value={avgHr} onChange={setAvgHr} />
+        </div>
+      )}
+
+      <div className="edit-label" style={{ marginTop: 12 }}>Intensidad percibida (RPE 1-10)</div>
+      <div className="rpe-row">
+        {RPE_OPTIONS.map((n) => (
+          <button key={n} className={"rpe-btn" + (rpe === n ? " rpe-active" : "")} onClick={() => setRpe(n)}>{n}</button>
+        ))}
+      </div>
+
+      <input className="input" style={{ marginTop: 10 }} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notas (opcional)" />
+      <button className="save-btn" onClick={submit}>Guardar actividad</button>
+    </section>
+  );
+}
+
+function CheckinForm({ existing, onSave }) {
+  const [energy, setEnergy] = useState(existing?.energy ?? null);
+  const [soreness, setSoreness] = useState(existing?.soreness ?? null);
+  const [pain, setPain] = useState(existing?.pain || {});
+  const [notes, setNotes] = useState(existing?.notes || "");
+
+  useEffect(() => {
+    setEnergy(existing?.energy ?? null);
+    setSoreness(existing?.soreness ?? null);
+    setPain(existing?.pain || {});
+    setNotes(existing?.notes || "");
+  }, [existing?.date]);
+
+  function setPainZone(key, v) {
+    setPain((prev) => ({ ...prev, [key]: v === "" ? undefined : Number(v) }));
+  }
+
+  function submit() {
+    const cleanPain = {};
+    Object.entries(pain).forEach(([k, v]) => {
+      if (v != null && v !== "" && Number(v) > 0) cleanPain[k] = Number(v);
+    });
+    onSave({ date: todayISO(), energy, soreness, pain: cleanPain, notes: notes.trim() });
+  }
+
+  return (
+    <section className="card">
+      <div className="section-title">Chequeo de hoy</div>
+      <div className="section-sub">Energía, fatiga muscular y dolor por zona — 5 segundos</div>
+
+      <div className="edit-label">Energía</div>
+      <div className="rpe-row five">
+        {[1, 2, 3, 4, 5].map((n) => (
+          <button key={n} className={"rpe-btn" + (energy === n ? " rpe-active" : "")} onClick={() => setEnergy(n)} title={ENERGY_LABELS[n]}>{n}</button>
+        ))}
+      </div>
+
+      <div className="edit-label" style={{ marginTop: 12 }}>Fatiga muscular (opcional)</div>
+      <div className="rpe-row five">
+        {[1, 2, 3, 4, 5].map((n) => (
+          <button key={n} className={"rpe-btn" + (soreness === n ? " rpe-active" : "")} onClick={() => setSoreness(n)}>{n}</button>
+        ))}
+      </div>
+
+      <div className="edit-label" style={{ marginTop: 12 }}>Dolor por zona (0-10, dejar en blanco si no duele)</div>
+      <div className="pain-grid">
+        {PAIN_ZONES.map((z) => (
+          <label key={z.key} className="pain-field">
+            <span className="target-cap">{z.label}</span>
+            <NumInput className="input target-input" decimal={false} placeholder="0"
+              value={pain[z.key] != null ? String(pain[z.key]) : ""}
+              onChange={(v) => setPainZone(z.key, v)} />
+          </label>
+        ))}
+      </div>
+
+      <input className="input" style={{ marginTop: 12 }} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notas (opcional)" />
+      <button className="save-btn" onClick={submit}>{existing ? "Actualizar chequeo" : "Guardar chequeo"}</button>
+    </section>
   );
 }
 
@@ -1125,4 +1403,13 @@ const CSS = `
 .tabbar { position: sticky; bottom: 0; display: flex; border-top: 1px solid rgba(237,234,227,0.08); background: #1B1F24; padding: 8px 8px calc(8px + env(safe-area-inset-bottom, 0px)); }
 .tabbtn { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; background: none; border: none; color: #5C6470; padding: 6px 0; font-size: 10.5px; font-family: 'Inter', sans-serif; font-weight: 600; }
 .tabbtn.active { color: #C08A3E; }
+
+.rpe-row { display: grid; grid-template-columns: repeat(10, 1fr); gap: 5px; }
+.rpe-row.five { grid-template-columns: repeat(5, 1fr); }
+.rpe-btn { background: #1B1F24; border: 1px solid rgba(237,234,227,0.14); border-radius: 8px; padding: 8px 0; color: #8B93A0; font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; }
+.rpe-active { background: #C08A3E; border-color: #C08A3E; color: #1B1F24; }
+.pain-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 6px; }
+.pain-field { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pain-field .target-input { width: 56px; text-align: center; padding: 8px 6px; }
+
 `;
