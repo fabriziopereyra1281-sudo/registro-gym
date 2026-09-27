@@ -1,0 +1,25 @@
+name: Mantener despierto Supabase
+
+on:
+  schedule:
+    - cron: "0 9 * * *" # todos los días a las 09:00 UTC
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hacer una consulta liviana a la base
+        run: |
+          http_status=$(curl -s -o /dev/null -w "%{http_code}" \
+            "${SUPABASE_URL}/rest/v1/configs?select=id&limit=1" \
+            -H "apikey: ${SUPABASE_ANON_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}")
+          echo "Respuesta de Supabase: $http_status"
+          if [ "$http_status" -ge 500 ]; then
+            echo "Supabase respondió con error de servidor"
+            exit 1
+          fi
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
