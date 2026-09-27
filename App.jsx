@@ -1222,6 +1222,12 @@ function PhotosSection({ photos, photoUrls, addPhoto, deletePhoto }) {
                 <PhotoCompareCard photo={photoA} url={photoA ? photoUrls[photoA.storagePath] : null} />
                 <PhotoCompareCard photo={photoB} url={photoB ? photoUrls[photoB.storagePath] : null} />
               </div>
+              {(() => {
+                const verdict = photoVerdict(photoA, photoB);
+                return verdict ? (
+                  <div className={"verdict-badge tone-" + verdict.tone}>{verdict.text}</div>
+                ) : null;
+              })()}
               {photoA && photoB && photoA.weight != null && photoB.weight != null && (
                 <div className="delta-row">
                   <span className="mono">{fmtNum(photoA.weight)} kg</span><span className="arrow">→</span><span className="mono">{fmtNum(photoB.weight)} kg</span>
@@ -1832,6 +1838,31 @@ function inWindow(dateISO, fromISO, toISOEnd) {
   return dateISO >= fromISO && dateISO <= toISOEnd;
 }
 
+// Veredicto automatico entre dos fotos: usa el peso/cintura cargados junto a
+// cada una (si estan) para decir avance/retroceso/estable sin que el usuario
+// tenga que interpretar los numeros el mismo. No analiza la imagen en si
+// (eso necesitaria IA con costo) — mide lo mismo que el resto del motor.
+function photoVerdict(older, newer) {
+  if (!older || !newer || older.id === newer.id) return null;
+  const dW = older.weight != null && newer.weight != null ? Number((newer.weight - older.weight).toFixed(2)) : null;
+  const dC = older.waist != null && newer.waist != null ? Number((newer.waist - older.waist).toFixed(2)) : null;
+  if (dW == null && dC == null) {
+    return { tone: "info", text: "Cargá peso y/o cintura al subir las fotos para que el motor marque avance o retroceso automáticamente entre estas dos." };
+  }
+  const good = [dW != null && dW < -0.1, dC != null && dC < -0.2].filter(Boolean).length;
+  const bad = [dW != null && dW > 0.1, dC != null && dC > 0.2].filter(Boolean).length;
+  let label = "Estable";
+  let tone = "flat";
+  if (good > 0 && bad === 0) { label = "Avance"; tone = "ok"; }
+  else if (bad > 0 && good === 0) { label = "Retroceso"; tone = "warn"; }
+  else if (good > 0 && bad > 0) { label = "Mixto"; tone = "flat"; }
+
+  const parts = [];
+  if (dW != null) parts.push(`peso ${dW <= 0 ? "" : "+"}${fmtNum(dW)} kg`);
+  if (dC != null) parts.push(`cintura ${dC <= 0 ? "" : "+"}${fmtNum(dC)} cm`);
+  return { tone, label, text: `${label}: ${parts.join(" · ")} entre estas dos fotos.` };
+}
+
 function computeCoach({ bwLogs, logs, activityLogs, checkins, mealLogs, targets }) {
   const today = todayISO();
   const w1Start = daysAgoISO(6); // esta semana: hoy y los 6 dias anteriores
@@ -2206,5 +2237,11 @@ const CSS = `
 .photo-compare-card { border-radius: 10px; overflow: hidden; background: #1B1F24; }
 .photo-compare-card img { width: 100%; display: block; }
 .photo-compare-card .photo-thumb-date { position: static; display: block; text-align: center; background: none; padding: 6px 0 0; }
+
+.verdict-badge { margin-top: 10px; padding: 10px 12px; border-radius: 10px; font-size: 13px; font-weight: 600; line-height: 1.4; }
+.verdict-badge.tone-ok { background: rgba(110,155,139,0.14); color: #6E9B8B; }
+.verdict-badge.tone-warn { background: rgba(192,103,58,0.14); color: #C0673A; }
+.verdict-badge.tone-flat { background: rgba(139,147,160,0.12); color: #8B93A0; }
+.verdict-badge.tone-info { background: rgba(139,147,160,0.08); color: #8B93A0; font-weight: 500; }
 
 `;
