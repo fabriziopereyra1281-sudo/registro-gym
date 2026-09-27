@@ -1256,6 +1256,40 @@ function PhotoCompareCard({ photo, url }) {
   );
 }
 
+// Las fotos de iPhone salen pesadas (3-5MB, a veces HEIC). Se redimensionan a
+// un ancho maximo y se reconvierten a JPEG en el navegador antes de subir:
+// para comparar composicion corporal no hace falta la resolucion original, y
+// asi el bucket gratuito de Supabase (1GB) rinde para años de fotos.
+function compressImage(file, maxDim = 1600, quality = 0.82) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      let { width, height } = img;
+      if (width > maxDim || height > maxDim) {
+        if (width >= height) { height = Math.round((height / width) * maxDim); width = maxDim; }
+        else { width = Math.round((width / height) * maxDim); height = maxDim; }
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, width, height);
+      canvas.toBlob(
+        (blob) => {
+          URL.revokeObjectURL(url);
+          if (!blob) { reject(new Error("no-blob")); return; }
+          resolve(new File([blob], "progreso.jpg", { type: "image/jpeg" }));
+        },
+        "image/jpeg",
+        quality
+      );
+    };
+    img.onerror = (err) => { URL.revokeObjectURL(url); reject(err); };
+    img.src = url;
+  });
+}
+
 function PhotoUploadForm({ onSave }) {
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
@@ -1264,12 +1298,23 @@ function PhotoUploadForm({ onSave }) {
   const [waist, setWaist] = useState("");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
+  const [compressing, setCompressing] = useState(false);
 
-  function onPick(e) {
+  async function onPick(e) {
     const f = e.target.files?.[0];
     if (!f) return;
-    setFile(f);
-    setPreview(URL.createObjectURL(f));
+    setCompressing(true);
+    try {
+      const compressed = await compressImage(f);
+      setFile(compressed);
+      setPreview(URL.createObjectURL(compressed));
+    } catch {
+      // Si algo falla comprimiendo (formato raro, etc.), subimos el original tal cual.
+      setFile(f);
+      setPreview(URL.createObjectURL(f));
+    } finally {
+      setCompressing(false);
+    }
   }
 
   async function submit() {
@@ -1284,8 +1329,8 @@ function PhotoUploadForm({ onSave }) {
     <div className="card-form" style={{ marginBottom: 14 }}>
       <label className="photo-upload-btn">
         <Camera size={18} />
-        <span>{file ? "Cambiar foto" : "Elegir foto"}</span>
-        <input type="file" accept="image/*" onChange={onPick} style={{ display: "none" }} />
+        <span>{compressing ? "Optimizando…" : file ? "Cambiar foto" : "Elegir foto"}</span>
+        <input type="file" accept="image/*" onChange={onPick} style={{ display: "none" }} disabled={compressing} />
       </label>
 
       {preview && (
@@ -1298,7 +1343,7 @@ function PhotoUploadForm({ onSave }) {
       </div>
       <NumInput placeholder="Cintura (cm, opcional)" value={waist} onChange={setWaist} />
       <input className="input" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notas (opcional)" />
-      <button className="save-btn" disabled={!file || saving} onClick={submit}>{saving ? "Subiendo…" : "Guardar foto"}</button>
+      <button className="save-btn" disabled={!file || saving || compressing} onClick={submit}>{saving ? "Subiendo…" : "Guardar foto"}</button>
     </div>
   );
 }
