@@ -98,6 +98,20 @@ create table if not exists meal_logs (
   created_at timestamptz default now()
 );
 
+-- Fotos de progreso: cada fila referencia un archivo en el bucket de Storage
+-- "progress-photos" (privado). weight/waist quedan pegados a la foto para
+-- poder mostrar el numero de ese dia sin ir a buscarlo a otra tabla.
+create table if not exists progress_photos (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users not null,
+  date date not null,
+  storage_path text not null,
+  weight numeric,
+  waist numeric,
+  notes text,
+  created_at timestamptz default now()
+);
+
 alter table configs enable row level security;
 alter table workout_logs enable row level security;
 alter table bodyweight_logs enable row level security;
@@ -105,6 +119,7 @@ alter table activity_logs enable row level security;
 alter table daily_checkins enable row level security;
 alter table nutrition_targets enable row level security;
 alter table meal_logs enable row level security;
+alter table progress_photos enable row level security;
 
 drop policy if exists "own_configs" on configs;
 create policy "own_configs" on configs
@@ -133,3 +148,28 @@ create policy "own_nutrition_targets" on nutrition_targets
 drop policy if exists "own_meal_logs" on meal_logs;
 create policy "own_meal_logs" on meal_logs
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+drop policy if exists "own_progress_photos" on progress_photos;
+create policy "own_progress_photos" on progress_photos
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- Bucket privado para las fotos en si (los archivos, no las filas de arriba).
+-- No es publico: cada foto se lee con una URL firmada que expira, generada
+-- desde la app solo para el dueno de la cuenta.
+insert into storage.buckets (id, name, public)
+values ('progress-photos', 'progress-photos', false)
+on conflict (id) do nothing;
+
+-- Cada archivo se guarda como "<user_id>/archivo.jpg": estas policies
+-- restringen el bucket a que cada usuario solo pueda tocar su propia carpeta.
+drop policy if exists "own_progress_photos_select" on storage.objects;
+create policy "own_progress_photos_select" on storage.objects
+  for select using (bucket_id = 'progress-photos' and (storage.foldername(name))[1] = auth.uid()::text);
+
+drop policy if exists "own_progress_photos_insert" on storage.objects;
+create policy "own_progress_photos_insert" on storage.objects
+  for insert with check (bucket_id = 'progress-photos' and (storage.foldername(name))[1] = auth.uid()::text);
+
+drop policy if exists "own_progress_photos_delete" on storage.objects;
+create policy "own_progress_photos_delete" on storage.objects
+  for delete using (bucket_id = 'progress-photos' and (storage.foldername(name))[1] = auth.uid()::text);

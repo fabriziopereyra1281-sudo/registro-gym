@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import {
   Dumbbell, TrendingUp, History, Plus, Trash2, ChevronDown, X, Check, Pencil, LogOut, Activity, Utensils, Sparkles,
+  Camera,
 } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -174,6 +175,16 @@ function mapTargetsRow(row) {
   if (!row) return null;
   return { calories: row.calories, protein: row.protein, carbs: row.carbs, fat: row.fat };
 }
+function mapPhotoRow(row) {
+  return {
+    id: row.id,
+    date: row.date,
+    storagePath: row.storage_path,
+    weight: row.weight,
+    waist: row.waist,
+    notes: row.notes,
+  };
+}
 function mapMealRow(row) {
   return {
     id: row.id,
@@ -213,6 +224,8 @@ export default function App() {
   const [checkins, setCheckins] = useState([]);
   const [nutritionTargets, setNutritionTargets] = useState(null);
   const [mealLogs, setMealLogs] = useState([]);
+  const [photos, setPhotos] = useState([]);
+  const [photoUrls, setPhotoUrls] = useState({});
   const [dataLoaded, setDataLoaded] = useState(false);
   const [openForm, setOpenForm] = useState(null);
   const [editMode, setEditMode] = useState(false);
@@ -240,6 +253,8 @@ export default function App() {
         setCheckins([]);
         setNutritionTargets(null);
         setMealLogs([]);
+        setPhotos([]);
+        setPhotoUrls({});
         setDataLoaded(false);
       }
     });
@@ -270,6 +285,8 @@ export default function App() {
       .from("nutrition_targets").select("*").eq("user_id", userId).maybeSingle();
     const { data: mealRows } = await supabase
       .from("meal_logs").select("*").eq("user_id", userId).order("date", { ascending: true });
+    const { data: photoRows } = await supabase
+      .from("progress_photos").select("*").eq("user_id", userId).order("date", { ascending: true });
 
     setConfig(cfg);
     setLogs((logRows || []).map(mapLogRow));
@@ -278,6 +295,7 @@ export default function App() {
     setCheckins((checkinRows || []).map(mapCheckinRow));
     setNutritionTargets(mapTargetsRow(targetsRow));
     setMealLogs((mealRows || []).map(mapMealRow));
+    setPhotos((photoRows || []).map(mapPhotoRow));
     setDataLoaded(true);
   }
 
@@ -428,6 +446,61 @@ export default function App() {
     setMealLogs((prev) => prev.filter((m) => m.id !== id));
   }
 
+  async function addPhoto(entry) {
+    const ext = (entry.file.name.split(".").pop() || "jpg").toLowerCase();
+    const path = `${session.user.id}/${Date.now()}-${Math.floor(Math.random() * 1e6)}.${ext}`;
+    const { error: upErr } = await supabase.storage.from("progress-photos").upload(path, entry.file);
+    if (upErr) { showToast("No se pudo subir la foto"); return; }
+    const row = {
+      user_id: session.user.id,
+      date: entry.date,
+      storage_path: path,
+      weight: entry.weight ?? null,
+      waist: entry.waist ?? null,
+      notes: entry.notes || null,
+    };
+    const { data, error } = await supabase.from("progress_photos").insert(row).select().single();
+    if (!error && data) {
+      setPhotos((prev) => [...prev, mapPhotoRow(data)]);
+      showToast("Foto guardada");
+    } else {
+      await supabase.storage.from("progress-photos").remove([path]);
+      showToast("No se pudo guardar la foto");
+    }
+  }
+
+  async function deletePhoto(id, storagePath) {
+    await supabase.storage.from("progress-photos").remove([storagePath]);
+    await supabase.from("progress_photos").delete().eq("id", id);
+    setPhotos((prev) => prev.filter((p) => p.id !== id));
+    setPhotoUrls((prev) => {
+      const next = { ...prev };
+      delete next[storagePath];
+      return next;
+    });
+  }
+
+  useEffect(() => {
+    const missing = photos.filter((p) => !photoUrls[p.storagePath]);
+    if (missing.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const entries = await Promise.all(
+        missing.map(async (p) => {
+          const { data } = await supabase.storage.from("progress-photos").createSignedUrl(p.storagePath, 3600);
+          return [p.storagePath, data?.signedUrl || null];
+        })
+      );
+      if (cancelled) return;
+      setPhotoUrls((prev) => {
+        const next = { ...prev };
+        entries.forEach(([path, url]) => { if (url) next[path] = url; });
+        return next;
+      });
+    })();
+    return () => { cancelled = true; };
+  }, [photos]);
+
   function lastEntryFor(exerciseId) {
     const matches = logs.filter((l) => l.exerciseId === exerciseId).sort((a, b) => (a.date < b.date ? 1 : -1));
     return matches[0] || null;
@@ -526,7 +599,17 @@ export default function App() {
               removeExercise={removeExercise}
             />
           ) : tab === "progreso" ? (
-            <ProgresoTab logs={logs} bwLogs={bwLogs} addBw={addBw} config={config} allExercises={allExercises} />
+            <ProgresoTab
+              logs={logs}
+              bwLogs={bwLogs}
+              addBw={addBw}
+              config={config}
+              allExercises={allExercises}
+              photos={photos}
+              photoUrls={photoUrls}
+              addPhoto={addPhoto}
+              deletePhoto={deletePhoto}
+            />
           ) : tab === "historial" ? (
             <HistorialTab logs={logs} deleteLog={deleteLog} updateLog={updateLog} />
           ) : tab === "mas" ? (
@@ -885,7 +968,7 @@ function ExerciseCard({ exercise, day, last, isOpen, onToggle, onSave }) {
 }
 
 // ---------------------------------------------------------------------------
-function ProgresoTab({ logs, bwLogs, addBw, config, allExercises }) {
+function ProgresoTab({ logs, bwLogs, addBw, config, allExercises, photos, photoUrls, addPhoto, deletePhoto }) {
   const [selectedExerciseId, setSelectedExerciseId] = useState(allExercises[0]?.id || null);
   const [bwInput, setBwInput] = useState("");
   const [waistInput, setWaistInput] = useState("");
@@ -1061,6 +1144,8 @@ function ProgresoTab({ logs, bwLogs, addBw, config, allExercises }) {
           </div>
         )}
       </section>
+
+      <PhotosSection photos={photos} photoUrls={photoUrls} addPhoto={addPhoto} deletePhoto={deletePhoto} />
     </div>
   );
 }
@@ -1072,6 +1157,148 @@ function BarRow({ label, value, scale, colorClass }) {
       <span className="bar-label mono">{label}</span>
       <div className="bar-track"><div className={"bar-fill " + colorClass} style={{ width: `${pct}%` }} /></div>
       <span className="bar-value mono">{value ? `${fmtNum(value)}kg` : "–"}</span>
+    </div>
+  );
+}
+
+function PhotosSection({ photos, photoUrls, addPhoto, deletePhoto }) {
+  const sorted = useMemo(() => [...photos].sort((a, b) => (a.date < b.date ? 1 : -1)), [photos]);
+  const [compareA, setCompareA] = useState(null);
+  const [compareB, setCompareB] = useState(null);
+
+  useEffect(() => {
+    if (sorted.length >= 2) {
+      if (!compareA) setCompareA(sorted[sorted.length - 1].id);
+      if (!compareB) setCompareB(sorted[0].id);
+    }
+  }, [sorted.length]);
+
+  const photoA = sorted.find((p) => p.id === compareA) || null;
+  const photoB = sorted.find((p) => p.id === compareB) || null;
+
+  return (
+    <section className="card">
+      <div className="section-title">Fotos de progreso</div>
+      <div className="section-sub">Una foto de frente, misma luz y pose, cada 1-2 semanas — vale más que la balanza sola</div>
+
+      <PhotoUploadForm onSave={addPhoto} />
+
+      {sorted.length === 0 ? (
+        <div className="empty small">Todavía no subiste ninguna foto.</div>
+      ) : (
+        <>
+          <div className="photo-grid">
+            {sorted.map((p) => (
+              <div key={p.id} className="photo-thumb">
+                {photoUrls[p.storagePath] ? (
+                  <img src={photoUrls[p.storagePath]} alt={p.date} />
+                ) : (
+                  <div className="photo-placeholder" />
+                )}
+                <div className="photo-thumb-date mono">{fmtShort(p.date)}</div>
+                <button className="photo-del" onClick={() => deletePhoto(p.id, p.storagePath)}><Trash2 size={13} /></button>
+              </div>
+            ))}
+          </div>
+
+          {sorted.length >= 2 && (
+            <div className="photo-compare">
+              <div className="edit-label" style={{ marginTop: 14 }}>Comparar</div>
+              <div className="side-grid two">
+                <div className="select-wrap">
+                  <select className="select" value={compareA || ""} onChange={(e) => setCompareA(e.target.value)}>
+                    {sorted.map((p) => <option key={p.id} value={p.id}>{fmtDateLabel(p.date)}</option>)}
+                  </select>
+                  <ChevronDown size={16} className="select-chevron" />
+                </div>
+                <div className="select-wrap">
+                  <select className="select" value={compareB || ""} onChange={(e) => setCompareB(e.target.value)}>
+                    {sorted.map((p) => <option key={p.id} value={p.id}>{fmtDateLabel(p.date)}</option>)}
+                  </select>
+                  <ChevronDown size={16} className="select-chevron" />
+                </div>
+              </div>
+              <div className="photo-compare-grid">
+                <PhotoCompareCard photo={photoA} url={photoA ? photoUrls[photoA.storagePath] : null} />
+                <PhotoCompareCard photo={photoB} url={photoB ? photoUrls[photoB.storagePath] : null} />
+              </div>
+              {photoA && photoB && photoA.weight != null && photoB.weight != null && (
+                <div className="delta-row">
+                  <span className="mono">{fmtNum(photoA.weight)} kg</span><span className="arrow">→</span><span className="mono">{fmtNum(photoB.weight)} kg</span>
+                  <span className={"delta " + (photoB.weight - photoA.weight <= 0 ? "down" : "up")}>
+                    {photoB.weight - photoA.weight <= 0 ? "" : "+"}{fmtNum(Number((photoB.weight - photoA.weight).toFixed(2)))} kg
+                  </span>
+                </div>
+              )}
+              {photoA && photoB && photoA.waist != null && photoB.waist != null && (
+                <div className="delta-row">
+                  <span className="mono">{fmtNum(photoA.waist)} cm</span><span className="arrow">→</span><span className="mono">{fmtNum(photoB.waist)} cm</span>
+                  <span className={"delta " + (photoB.waist - photoA.waist <= 0 ? "down" : "up")}>
+                    {photoB.waist - photoA.waist <= 0 ? "" : "+"}{fmtNum(Number((photoB.waist - photoA.waist).toFixed(2)))} cm
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function PhotoCompareCard({ photo, url }) {
+  if (!photo) return <div className="photo-compare-card empty small">Elegí una fecha</div>;
+  return (
+    <div className="photo-compare-card">
+      {url ? <img src={url} alt={photo.date} /> : <div className="photo-placeholder" />}
+      <div className="photo-thumb-date mono">{fmtDateLabel(photo.date)}</div>
+    </div>
+  );
+}
+
+function PhotoUploadForm({ onSave }) {
+  const [file, setFile] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [date, setDate] = useState(todayISO());
+  const [weight, setWeight] = useState("");
+  const [waist, setWaist] = useState("");
+  const [notes, setNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  function onPick(e) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setFile(f);
+    setPreview(URL.createObjectURL(f));
+  }
+
+  async function submit() {
+    if (!file || saving) return;
+    setSaving(true);
+    await onSave({ file, date, weight: toNum(weight), waist: toNum(waist), notes: notes.trim() });
+    setSaving(false);
+    setFile(null); setPreview(null); setWeight(""); setWaist(""); setNotes("");
+  }
+
+  return (
+    <div className="card-form" style={{ marginBottom: 14 }}>
+      <label className="photo-upload-btn">
+        <Camera size={18} />
+        <span>{file ? "Cambiar foto" : "Elegir foto"}</span>
+        <input type="file" accept="image/*" onChange={onPick} style={{ display: "none" }} />
+      </label>
+
+      {preview && (
+        <div className="photo-preview"><img src={preview} alt="preview" /></div>
+      )}
+
+      <div className="side-grid two">
+        <input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+        <NumInput placeholder="Peso (kg, opcional)" value={weight} onChange={setWeight} />
+      </div>
+      <NumInput placeholder="Cintura (cm, opcional)" value={waist} onChange={setWaist} />
+      <input className="input" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notas (opcional)" />
+      <button className="save-btn" disabled={!file || saving} onClick={submit}>{saving ? "Subiendo…" : "Guardar foto"}</button>
     </div>
   );
 }
@@ -1916,5 +2143,23 @@ const CSS = `
 .dot-down { color: #0092B0; }
 .dot-flat { color: #8B93A0; }
 .dot-na { color: #5C6470; }
+
+.input[type="date"] { color-scheme: dark; }
+
+.photo-upload-btn { display: flex; align-items: center; justify-content: center; gap: 8px; background: rgba(192,138,62,0.12); border: 1px dashed rgba(192,138,62,0.5); color: #C08A3E; border-radius: 12px; padding: 12px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.photo-preview { border-radius: 12px; overflow: hidden; max-height: 220px; }
+.photo-preview img { width: 100%; max-height: 220px; object-fit: cover; display: block; }
+
+.photo-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
+.photo-thumb { position: relative; aspect-ratio: 3 / 4; border-radius: 10px; overflow: hidden; background: #1B1F24; }
+.photo-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.photo-placeholder { width: 100%; height: 100%; background: #1B1F24; }
+.photo-thumb-date { position: absolute; left: 4px; bottom: 4px; background: rgba(27,31,36,0.75); padding: 2px 5px; border-radius: 5px; font-size: 10px; }
+.photo-del { position: absolute; top: 4px; right: 4px; background: rgba(27,31,36,0.75); border: none; color: #EDEAE3; border-radius: 6px; padding: 4px; }
+
+.photo-compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+.photo-compare-card { border-radius: 10px; overflow: hidden; background: #1B1F24; }
+.photo-compare-card img { width: 100%; display: block; }
+.photo-compare-card .photo-thumb-date { position: static; display: block; text-align: center; background: none; padding: 6px 0 0; }
 
 `;
