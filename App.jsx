@@ -2191,14 +2191,19 @@ function DayVerdictCard({ verdict, onPickFood }) {
 }
 
 function MacroBar({ label, value, target, unit, colorClass }) {
-  const scale = target && target > 0 ? target : Math.max(value, 1);
-  const pct = Math.min(100, (value / scale) * 100);
+  const hasTarget = target && target > 0;
+  const pct = hasTarget ? Math.min(100, (value / target) * 100) : 0;
   return (
     <div className="bar-row">
       <span className="bar-label mono">{label}</span>
-      <div className="bar-track"><div className={"bar-fill " + colorClass} style={{ width: `${pct}%` }} /></div>
-      <span className="bar-value mono" style={{ width: 84 }}>
-        {fmtNum(value)}{unit}{target ? ` / ${fmtNum(target)}${unit}` : ""}
+      <div className="bar-track">
+        {hasTarget && <div className={"bar-fill " + colorClass} style={{ width: `${pct}%` }} />}
+      </div>
+      <span
+        className="bar-value mono"
+        style={hasTarget ? { width: 84 } : { width: 108, color: "#8B93A0", fontSize: 10.5 }}
+      >
+        {hasTarget ? `${fmtNum(value)}${unit} / ${fmtNum(target)}${unit}` : `${fmtNum(value)}${unit} · sin objetivo`}
       </span>
     </div>
   );
