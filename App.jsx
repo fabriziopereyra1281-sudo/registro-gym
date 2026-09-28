@@ -737,6 +737,8 @@ export default function App() {
               addMeal={addMeal}
               deleteMeal={deleteMeal}
               bwLogs={bwLogs}
+              logs={logs}
+              config={config}
             />
           ) : (
             <CoachTab
@@ -1857,7 +1859,7 @@ function AddSupplementForm({ onSave }) {
 }
 
 // ---------------------------------------------------------------------------
-function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwLogs }) {
+function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwLogs, logs, config }) {
   const latestWeight = useMemo(() => {
     const sorted = [...bwLogs].filter((b) => b.weight != null).sort((a, b) => (a.date < b.date ? 1 : -1));
     return sorted[0]?.weight ?? null;
@@ -1881,9 +1883,16 @@ function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwL
     [todaysMeals]
   );
 
+  const dayVerdict = useMemo(
+    () => computeDayVerdict({ totals, targets, logs, config }),
+    [totals, targets, logs, config]
+  );
+
   return (
     <div className="tabpane">
       <TargetsCard targets={targets} onSave={saveTargets} latestWeight={latestWeight} />
+
+      <DayVerdictCard verdict={dayVerdict} />
 
       <section className="card">
         <div className="section-title">Hoy</div>
@@ -1927,6 +1936,73 @@ function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwL
         </section>
       )}
     </div>
+  );
+}
+
+const DAY_KEY_BY_WEEKDAY = { 1: "lun", 2: "mar", 3: "mie", 4: "jue", 5: "vie" };
+
+// Arma en una frase lo que falta hoy para ir en linea con el objetivo:
+// cuanta comida (kcal/proteina) queda por cargar, y si ya se registro el
+// entrenamiento del dia (segun el split lunes-viernes; sabado/domingo es
+// descanso y no se evalua entrenamiento).
+function computeDayVerdict({ totals, targets, logs, config }) {
+  if (!targets) {
+    return { tone: "info", text: "Definí tus objetivos diarios arriba para ver acá qué te falta hoy." };
+  }
+
+  const today = todayISO();
+  const weekday = new Date().getDay();
+  const dayKey = DAY_KEY_BY_WEEKDAY[weekday] || null;
+  const isRestDay = !dayKey;
+  const trainedToday = logs.some((l) => l.date === today && (!dayKey || l.day === dayKey));
+
+  const kcalTarget = targets.calories || 0;
+  const proteinTarget = targets.protein || 0;
+  const remainingKcal = kcalTarget - totals.calories;
+  const remainingProtein = proteinTarget - totals.protein;
+  const overKcalBy = -remainingKcal;
+
+  const parts = [];
+  let worstTone = "ok";
+
+  if (kcalTarget > 0 && overKcalBy > kcalTarget * 0.1) {
+    parts.push(`te pasaste por ${fmtNum(overKcalBy)} kcal`);
+    worstTone = "danger";
+  } else {
+    if (remainingKcal > Math.max(50, kcalTarget * 0.05)) {
+      parts.push(`te quedan ${fmtNum(remainingKcal)} kcal`);
+      if (worstTone === "ok") worstTone = "warn";
+    }
+    if (remainingProtein > 5) {
+      parts.push(`${fmtNum(remainingProtein)}g de proteína`);
+      if (worstTone === "ok") worstTone = "warn";
+    }
+  }
+
+  if (!isRestDay && !trainedToday) {
+    const focus = config?.[dayKey]?.focus;
+    parts.push(`todavía no cargaste el entrenamiento de hoy${focus ? ` (${focus})` : ""}`);
+    worstTone = worstTone === "danger" ? "danger" : "warn";
+  }
+
+  if (parts.length === 0) {
+    const trainingBit = isRestDay ? "hoy es descanso" : "ya entrenaste";
+    return { tone: "ok", text: `Vas perfecto: cumpliste con la comida y ${trainingBit}.` };
+  }
+
+  const joined =
+    parts.length === 1
+      ? parts[0]
+      : parts.slice(0, -1).join(", ") + " y " + parts[parts.length - 1];
+
+  return { tone: worstTone, text: `Te falta: ${joined}.` };
+}
+
+function DayVerdictCard({ verdict }) {
+  return (
+    <section className={"card verdict-card verdict-" + verdict.tone}>
+      <div className="verdict-text">{verdict.text}</div>
+    </section>
   );
 }
 
@@ -2690,5 +2766,16 @@ const CSS = `
 .breakdown-row > span:first-child { color: #8B93A0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; font-weight: 600; }
 .breakdown-row > span:last-child { color: #EDEAE3; }
 .breakdown-note { font-size: 11.5px; color: #5C6470; line-height: 1.5; padding-top: 4px; border-top: 1px solid rgba(237,234,227,0.08); }
+
+.verdict-card { padding: 14px 16px; border-left: 3px solid; }
+.verdict-text { font-size: 14px; font-weight: 600; line-height: 1.4; }
+.verdict-ok { border-color: #4CAF7D; background: rgba(76,175,125,0.10); }
+.verdict-ok .verdict-text { color: #4CAF7D; }
+.verdict-warn { border-color: #C08A3E; background: rgba(192,138,62,0.10); }
+.verdict-warn .verdict-text { color: #C08A3E; }
+.verdict-danger { border-color: #D9534F; background: rgba(217,83,79,0.10); }
+.verdict-danger .verdict-text { color: #D9534F; }
+.verdict-info { border-color: #5C6470; background: rgba(92,100,112,0.10); }
+.verdict-info .verdict-text { color: #8B93A0; }
 
 `;
