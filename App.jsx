@@ -736,6 +736,7 @@ export default function App() {
               mealLogs={mealLogs}
               addMeal={addMeal}
               deleteMeal={deleteMeal}
+              bwLogs={bwLogs}
             />
           ) : (
             <CoachTab
@@ -1856,7 +1857,12 @@ function AddSupplementForm({ onSave }) {
 }
 
 // ---------------------------------------------------------------------------
-function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal }) {
+function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwLogs }) {
+  const latestWeight = useMemo(() => {
+    const sorted = [...bwLogs].filter((b) => b.weight != null).sort((a, b) => (a.date < b.date ? 1 : -1));
+    return sorted[0]?.weight ?? null;
+  }, [bwLogs]);
+
   const todaysMeals = useMemo(
     () => mealLogs.filter((m) => m.date === todayISO()),
     [mealLogs]
@@ -1877,7 +1883,7 @@ function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal }) {
 
   return (
     <div className="tabpane">
-      <TargetsCard targets={targets} onSave={saveTargets} />
+      <TargetsCard targets={targets} onSave={saveTargets} latestWeight={latestWeight} />
 
       <section className="card">
         <div className="section-title">Hoy</div>
@@ -1938,12 +1944,38 @@ function MacroBar({ label, value, target, unit, colorClass }) {
   );
 }
 
-function TargetsCard({ targets, onSave }) {
-  const [calories, setCalories] = useState(targets?.calories != null ? toInput(targets.calories) : "");
-  const [protein, setProtein] = useState(targets?.protein != null ? toInput(targets.protein) : "");
-  const [carbs, setCarbs] = useState(targets?.carbs != null ? toInput(targets.carbs) : "");
-  const [fat, setFat] = useState(targets?.fat != null ? toInput(targets.fat) : "");
+// Objetivo diario automatico a partir del peso: manteniemiento ~33 kcal/kg
+// (moderadamente activo, pesas 5x/semana) menos un deficit leve del 15% para
+// bajar grasa sin resignar musculo; proteina alta (2.2 g/kg) para preservar
+// masa magra en deficit; grasas en un piso saludable (0.8 g/kg); el resto,
+// carbohidratos. Son las mismas cuentas que se usan para sugerir un plan de
+// nutricion deportiva estandar -- el usuario puede ajustarlas a mano despues.
+function computeAutoTargets(weightKg) {
+  if (!weightKg || weightKg <= 0) return null;
+  const maintenance = weightKg * 33;
+  const calories = Math.round(maintenance * 0.85);
+  const protein = Math.round(weightKg * 2.2);
+  const fat = Math.round(weightKg * 0.8);
+  const carbsKcal = calories - protein * 4 - fat * 9;
+  const carbs = Math.max(0, Math.round(carbsKcal / 4));
+  return { calories, protein, carbs, fat };
+}
+
+function TargetsCard({ targets, onSave, latestWeight }) {
+  const auto = useMemo(() => computeAutoTargets(latestWeight), [latestWeight]);
+  const [calories, setCalories] = useState(targets?.calories != null ? toInput(targets.calories) : auto ? String(auto.calories) : "");
+  const [protein, setProtein] = useState(targets?.protein != null ? toInput(targets.protein) : auto ? String(auto.protein) : "");
+  const [carbs, setCarbs] = useState(targets?.carbs != null ? toInput(targets.carbs) : auto ? String(auto.carbs) : "");
+  const [fat, setFat] = useState(targets?.fat != null ? toInput(targets.fat) : auto ? String(auto.fat) : "");
   const [editing, setEditing] = useState(!targets);
+
+  function applyAuto() {
+    if (!auto) return;
+    setCalories(String(auto.calories));
+    setProtein(String(auto.protein));
+    setCarbs(String(auto.carbs));
+    setFat(String(auto.fat));
+  }
 
   function submit() {
     onSave({ calories: toNum(calories), protein: toNum(protein), carbs: toNum(carbs), fat: toNum(fat) });
@@ -1969,7 +2001,22 @@ function TargetsCard({ targets, onSave }) {
   return (
     <section className="card">
       <div className="section-title">Objetivos diarios</div>
-      <div className="section-sub">Calorías y macros — se comparan contra lo que vayas registrando</div>
+      <div className="section-sub">
+        {auto
+          ? `Calculado según tu último peso registrado (${fmtNum(latestWeight)} kg) — déficit leve para bajar grasa preservando músculo. Lo podés ajustar.`
+          : "Registrá tu peso en \"Progreso\" para poder calcularlo automático — mientras tanto, cargalo a mano."}
+      </div>
+
+      {auto && (
+        <button
+          className="save-btn"
+          style={{ marginBottom: 10, background: "rgba(192,138,62,0.16)", color: "#C08A3E" }}
+          onClick={applyAuto}
+        >
+          Calcular automático según mi peso
+        </button>
+      )}
+
       <div className="side-grid two">
         <NumInput placeholder="Calorías (kcal)" decimal={false} value={calories} onChange={setCalories} />
         <NumInput placeholder="Proteína (g)" value={protein} onChange={setProtein} />
