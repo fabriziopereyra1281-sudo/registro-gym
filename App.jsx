@@ -245,6 +245,12 @@ const FOOD_DB = [
   { id: "palta", name: "Palta", cat: "Grasas", unit: true, unitWord: "mitad", unitWordPlural: "mitades", kcal: 160, protein: 2, carbs: 8.5, fat: 15 },
   { id: "almendras", name: "Almendras / nueces", cat: "Grasas", unit: true, unitWord: "puñado de 20 g", unitWordPlural: "puñados de 20 g", kcal: 120, protein: 4, carbs: 4, fat: 11 },
   { id: "mani", name: "Manteca de maní", cat: "Grasas", unit: true, unitWord: "cucharada", unitWordPlural: "cucharadas", kcal: 95, protein: 4, carbs: 3, fat: 8 },
+  { id: "zanahoria", name: "Zanahoria cocida", cat: "Verduras", unit: false, kcal: 35, protein: 0.8, carbs: 8, fat: 0.2 },
+  { id: "zapallo_anco", name: "Zapallo (anco / brasilero) cocido", cat: "Verduras", unit: false, kcal: 40, protein: 1, carbs: 10, fat: 0.1 },
+  { id: "zapallo_verde", name: "Zapallo verde / zapallito cocido", cat: "Verduras", unit: false, kcal: 20, protein: 1.2, carbs: 3.5, fat: 0.3 },
+  { id: "verduras_mixtas", name: "Verduras mixtas / ensalada", cat: "Verduras", unit: false, kcal: 22, protein: 1, carbs: 4, fat: 0.2 },
+  { id: "brocoli", name: "Brócoli cocido", cat: "Verduras", unit: false, kcal: 35, protein: 2.4, carbs: 7, fat: 0.4 },
+  { id: "espinaca", name: "Espinaca cocida", cat: "Verduras", unit: false, kcal: 23, protein: 2.9, carbs: 3.6, fat: 0.4 },
 ];
 
 function computeFoodMacros(foodId, qty) {
