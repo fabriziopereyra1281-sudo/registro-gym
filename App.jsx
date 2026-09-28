@@ -1941,6 +1941,39 @@ function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwL
 
 const DAY_KEY_BY_WEEKDAY = { 1: "lun", 2: "mar", 3: "mie", 4: "jue", 5: "vie" };
 
+// Si falta proteina, busca en FOOD_DB el alimento proteico mas eficiente
+// (mas proteina por kcal) y calcula cuanto de ese alimento cubre lo que
+// falta, para poder sugerir algo concreto y no solo un numero.
+function suggestFoodForProtein(remainingProtein) {
+  if (remainingProtein <= 0) return null;
+  const proteinFoods = FOOD_DB.filter((f) => f.cat === "Proteínas");
+  const best = [...proteinFoods].sort((a, b) => b.protein / b.kcal - a.protein / a.kcal)[0];
+  if (!best) return null;
+
+  let qty, kcalUsed, label;
+  if (best.unit) {
+    qty = Math.max(1, Math.ceil((remainingProtein / best.protein) * 2) / 2);
+    kcalUsed = qty * best.kcal;
+    const word = qty === 1 ? best.unitWord : best.unitWordPlural;
+    label = `${fmtNum(qty)} ${word} de ${best.name}`;
+  } else {
+    const grams = (remainingProtein / best.protein) * 100;
+    qty = Math.max(20, Math.round(grams / 10) * 10);
+    kcalUsed = (qty / 100) * best.kcal;
+    label = `${fmtNum(qty)} g de ${best.name}`;
+  }
+  return { label, kcal: Math.round(kcalUsed) };
+}
+
+// Sugerencia simple y gratuita para compensar un exceso de calorias: una
+// caminata a paso rapido (estimacion general ~5 kcal/min) o aligerar la
+// proxima comida. No reemplaza un dato real de gasto energetico, es una
+// referencia practica.
+function suggestFixForExcess(overKcalBy) {
+  const walkMin = Math.max(10, Math.round(overKcalBy / 5 / 5) * 5);
+  return `Para compensar: una caminata rápida de ~${walkMin} min, o aligerá la próxima comida (menos carbos y grasas).`;
+}
+
 // Arma en una frase lo que falta hoy para ir en linea con el objetivo:
 // cuanta comida (kcal/proteina) queda por cargar, y si ya se registro el
 // entrenamiento del dia (segun el split lunes-viernes; sabado/domingo es
@@ -1964,10 +1997,12 @@ function computeDayVerdict({ totals, targets, logs, config }) {
 
   const parts = [];
   let worstTone = "ok";
+  let suggestion = null;
 
   if (kcalTarget > 0 && overKcalBy > kcalTarget * 0.1) {
     parts.push(`te pasaste por ${fmtNum(overKcalBy)} kcal`);
     worstTone = "danger";
+    suggestion = suggestFixForExcess(overKcalBy);
   } else {
     if (remainingKcal > Math.max(50, kcalTarget * 0.05)) {
       parts.push(`te quedan ${fmtNum(remainingKcal)} kcal`);
@@ -1976,6 +2011,8 @@ function computeDayVerdict({ totals, targets, logs, config }) {
     if (remainingProtein > 5) {
       parts.push(`${fmtNum(remainingProtein)}g de proteína`);
       if (worstTone === "ok") worstTone = "warn";
+      const food = suggestFoodForProtein(remainingProtein);
+      if (food) suggestion = `Con ${food.label} (~${fmtNum(food.kcal)} kcal) lo cubrís.`;
     }
   }
 
@@ -1987,7 +2024,7 @@ function computeDayVerdict({ totals, targets, logs, config }) {
 
   if (parts.length === 0) {
     const trainingBit = isRestDay ? "hoy es descanso" : "ya entrenaste";
-    return { tone: "ok", text: `Vas perfecto: cumpliste con la comida y ${trainingBit}.` };
+    return { tone: "ok", text: `Vas perfecto: cumpliste con la comida y ${trainingBit}.`, suggestion: null };
   }
 
   const joined =
@@ -1995,13 +2032,14 @@ function computeDayVerdict({ totals, targets, logs, config }) {
       ? parts[0]
       : parts.slice(0, -1).join(", ") + " y " + parts[parts.length - 1];
 
-  return { tone: worstTone, text: `Te falta: ${joined}.` };
+  return { tone: worstTone, text: `Te falta: ${joined}.`, suggestion };
 }
 
 function DayVerdictCard({ verdict }) {
   return (
     <section className={"card verdict-card verdict-" + verdict.tone}>
       <div className="verdict-text">{verdict.text}</div>
+      {verdict.suggestion && <div className="verdict-suggestion">{verdict.suggestion}</div>}
     </section>
   );
 }
@@ -2769,6 +2807,7 @@ const CSS = `
 
 .verdict-card { padding: 14px 16px; border-left: 3px solid; }
 .verdict-text { font-size: 14px; font-weight: 600; line-height: 1.4; }
+.verdict-suggestion { font-size: 12.5px; font-weight: 400; line-height: 1.4; margin-top: 6px; color: #C7CDD6; }
 .verdict-ok { border-color: #4CAF7D; background: rgba(76,175,125,0.10); }
 .verdict-ok .verdict-text { color: #4CAF7D; }
 .verdict-warn { border-color: #C08A3E; background: rgba(192,138,62,0.10); }
