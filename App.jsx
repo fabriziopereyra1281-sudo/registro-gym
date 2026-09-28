@@ -225,6 +225,7 @@ const FOOD_DB = [
   { id: "pollo", name: "Pechuga de pollo", cat: "Proteínas", unit: false, kcal: 165, protein: 31, carbs: 0, fat: 3.6 },
   { id: "carne_magra", name: "Carne magra (nalga/lomo)", cat: "Proteínas", unit: false, kcal: 190, protein: 29, carbs: 0, fat: 8 },
   { id: "carne_picada", name: "Carne picada magra", cat: "Proteínas", unit: false, kcal: 210, protein: 26, carbs: 0, fat: 11 },
+  { id: "asado", name: "Asado / carne vacuna a la parrilla", cat: "Proteínas", unit: false, kcal: 250, protein: 26, carbs: 0, fat: 16 },
   { id: "huevo", name: "Huevo entero", cat: "Proteínas", unit: true, unitWord: "unidad", unitWordPlural: "unidades", kcal: 70, protein: 6, carbs: 0.5, fat: 5 },
   { id: "atun", name: "Atún al natural", cat: "Proteínas", unit: false, kcal: 116, protein: 26, carbs: 0, fat: 1 },
   { id: "pescado", name: "Merluza / pescado blanco", cat: "Proteínas", unit: false, kcal: 90, protein: 19, carbs: 0, fat: 1 },
@@ -756,6 +757,7 @@ export default function App() {
               bwLogs={bwLogs}
               logs={logs}
               config={config}
+              activityLogs={activityLogs}
             />
           ) : (
             <CoachTab
@@ -1876,7 +1878,7 @@ function AddSupplementForm({ onSave }) {
 }
 
 // ---------------------------------------------------------------------------
-function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwLogs, logs, config }) {
+function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwLogs, logs, config, activityLogs }) {
   const latestWeight = useMemo(() => {
     const sorted = [...bwLogs].filter((b) => b.weight != null).sort((a, b) => (a.date < b.date ? 1 : -1));
     return sorted[0]?.weight ?? null;
@@ -1904,16 +1906,30 @@ function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwL
     [todaysMeals]
   );
 
+  const isRestDay = useMemo(() => !DAY_KEY_BY_WEEKDAY[new Date().getDay()], []);
+  const activityKcal = useMemo(() => {
+    const today = todayISO();
+    return activityLogs
+      .filter((a) => a.date === today)
+      .reduce((sum, a) => sum + computeActivityKcal(a, latestWeight), 0);
+  }, [activityLogs, latestWeight]);
+
+  const effectiveTargets = useMemo(
+    () => computeEffectiveTargets(targets, { isRestDay, activityKcal }),
+    [targets, isRestDay, activityKcal]
+  );
+
+  const [suggestFoodId, setSuggestFoodId] = useState(null);
   const dayVerdict = useMemo(
-    () => computeDayVerdict({ totals, targets, logs, config }),
-    [totals, targets, logs, config]
+    () => computeDayVerdict({ totals, targets: effectiveTargets, logs, config, suggestFoodId }),
+    [totals, effectiveTargets, logs, config, suggestFoodId]
   );
 
   return (
     <div className="tabpane">
       <TargetsCard targets={targets} onSave={saveTargets} latestWeight={latestWeight} />
 
-      <DayVerdictCard verdict={dayVerdict} />
+      <DayVerdictCard verdict={dayVerdict} onPickFood={setSuggestFoodId} />
 
       <GoalCard
         targets={targets}
@@ -1924,13 +1940,16 @@ function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwL
 
       <section className="card">
         <div className="section-title">Hoy</div>
-        <div className="section-sub">Comidas registradas vs. objetivo diario</div>
-        {targets ? (
+        <div className="section-sub">
+          Comidas registradas vs. objetivo diario
+          {effectiveTargets?.adjustmentNotes?.length > 0 ? ` (ajustado: ${effectiveTargets.adjustmentNotes.join(", ")})` : ""}
+        </div>
+        {effectiveTargets ? (
           <div className="cardlist">
-            <MacroBar label="Kcal" value={totals.calories} target={targets.calories} unit="" colorClass="bar-accent" />
-            <MacroBar label="Prot" value={totals.protein} target={targets.protein} unit="g" colorClass="bar-accent2" />
-            <MacroBar label="Carb" value={totals.carbs} target={targets.carbs} unit="g" colorClass="bar-accent" />
-            <MacroBar label="Gras" value={totals.fat} target={targets.fat} unit="g" colorClass="bar-accent2" />
+            <MacroBar label="Kcal" value={totals.calories} target={effectiveTargets.calories} unit="" colorClass="bar-accent" />
+            <MacroBar label="Prot" value={totals.protein} target={effectiveTargets.protein} unit="g" colorClass="bar-accent2" />
+            <MacroBar label="Carb" value={totals.carbs} target={effectiveTargets.carbs} unit="g" colorClass="bar-accent" />
+            <MacroBar label="Gras" value={totals.fat} target={effectiveTargets.fat} unit="g" colorClass="bar-accent2" />
           </div>
         ) : (
           <div className="empty small">Definí tus objetivos arriba para ver el avance del día.</div>
@@ -1969,28 +1988,96 @@ function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwL
 
 const DAY_KEY_BY_WEEKDAY = { 1: "lun", 2: "mar", 3: "mie", 4: "jue", 5: "vie" };
 
-// Si falta proteina, busca en FOOD_DB el alimento proteico mas eficiente
-// (mas proteina por kcal) y calcula cuanto de ese alimento cubre lo que
-// falta, para poder sugerir algo concreto y no solo un numero.
-function suggestFoodForProtein(remainingProtein) {
-  if (remainingProtein <= 0) return null;
-  const proteinFoods = FOOD_DB.filter((f) => f.cat === "Proteínas");
-  const best = [...proteinFoods].sort((a, b) => b.protein / b.kcal - a.protein / a.kcal)[0];
-  if (!best) return null;
+// Tope de una porcion realista de una sola vez -- evita sugerir algo como
+// "750g de atun" en una sola comida. Si lo que falta supera el tope, se
+// sugiere el tope igual y se avisa que es parcial (repartir en mas de una
+// comida), en vez de mentir con una porcion gigante.
+const MAX_SINGLE_PORTION_G = 300;
+const MAX_SINGLE_PORTION_UNITS = 4;
 
-  let qty, kcalUsed, label;
-  if (best.unit) {
-    qty = Math.max(1, Math.ceil((remainingProtein / best.protein) * 2) / 2);
-    kcalUsed = qty * best.kcal;
-    const word = qty === 1 ? best.unitWord : best.unitWordPlural;
-    label = `${fmtNum(qty)} ${word} de ${best.name}`;
+// Calcula cuanto de UN alimento puntual (elegido por el usuario o el mejor
+// por defecto) hace falta para cubrir la proteina que falta, respetando el
+// tope de porcion realista.
+function computeFoodQtyForProtein(foodId, remainingProtein) {
+  const food = FOOD_DB.find((f) => f.id === foodId);
+  if (!food || remainingProtein <= 0) return null;
+
+  let qty, capped = false;
+  if (food.unit) {
+    const rawQty = Math.max(1, Math.ceil((remainingProtein / food.protein) * 2) / 2);
+    if (rawQty > MAX_SINGLE_PORTION_UNITS) { qty = MAX_SINGLE_PORTION_UNITS; capped = true; }
+    else qty = rawQty;
   } else {
-    const grams = (remainingProtein / best.protein) * 100;
-    qty = Math.max(20, Math.round(grams / 10) * 10);
-    kcalUsed = (qty / 100) * best.kcal;
-    label = `${fmtNum(qty)} g de ${best.name}`;
+    const rawGrams = Math.max(20, Math.round((remainingProtein / food.protein) * 100 / 10) * 10);
+    if (rawGrams > MAX_SINGLE_PORTION_G) { qty = MAX_SINGLE_PORTION_G; capped = true; }
+    else qty = rawGrams;
   }
-  return { label, kcal: Math.round(kcalUsed) };
+
+  const factor = food.unit ? qty : qty / 100;
+  const kcal = Math.round(food.kcal * factor);
+  const protein = Number((food.protein * factor).toFixed(1));
+  const label = food.unit
+    ? `${fmtNum(qty)} ${qty === 1 ? food.unitWord : food.unitWordPlural} de ${food.name}`
+    : `${fmtNum(qty)} g de ${food.name}`;
+
+  return { foodId: food.id, label, kcal, protein, capped };
+}
+
+// Si no se eligio un alimento puntual, busca en FOOD_DB el mas eficiente
+// (mas proteina por kcal) para sugerir algo concreto por defecto.
+function bestProteinFoodId() {
+  const proteinFoods = FOOD_DB.filter((f) => f.cat === "Proteínas");
+  return [...proteinFoods].sort((a, b) => b.protein / b.kcal - a.protein / a.kcal)[0]?.id ?? null;
+}
+
+function suggestFoodForProtein(remainingProtein, chosenFoodId) {
+  if (remainingProtein <= 0) return null;
+  const foodId = chosenFoodId || bestProteinFoodId();
+  if (!foodId) return null;
+  return computeFoodQtyForProtein(foodId, remainingProtein);
+}
+
+// Estimacion gratuita de gasto energetico de una actividad, por METs segun
+// el RPE cargado (no depende del reloj) y el peso actual: kcal/min = MET x
+// 3.5 x peso(kg) / 200 -- formula estandar de fisiologia del ejercicio.
+function metForRpe(rpe) {
+  if (rpe == null) return 5;
+  if (rpe <= 3) return 3;
+  if (rpe <= 6) return 6;
+  if (rpe <= 8) return 8;
+  return 10;
+}
+function computeActivityKcal(activity, weightKg) {
+  if (!activity?.durationMin || !weightKg) return 0;
+  const met = metForRpe(activity.intensityRpe);
+  return Math.round((met * 3.5 * weightKg / 200) * activity.durationMin);
+}
+
+// Ajusta el objetivo base del dia (el que se guarda fijo en "Objetivos
+// diarios") segun el tipo de dia: en descanso baja un poco los carbohidratos
+// (la proteina nunca se toca, para no resignar preservacion muscular); si
+// hubo actividad extra hoy, suma esas kcal como carbohidratos para reponer
+// lo gastado. Nunca modifica lo guardado, solo lo que se muestra hoy.
+function computeEffectiveTargets(targets, { isRestDay, activityKcal }) {
+  if (!targets) return null;
+  let carbs = targets.carbs || 0;
+  let calories = targets.calories || 0;
+  const notes = [];
+
+  if (isRestDay && carbs > 0) {
+    const cut = Math.round(carbs * 0.15);
+    carbs = Math.max(0, carbs - cut);
+    calories -= cut * 4;
+    notes.push(`descanso: -${fmtNum(cut)}g carbos`);
+  }
+  if (activityKcal > 0) {
+    const bonusCarbs = Math.round(activityKcal / 4);
+    carbs += bonusCarbs;
+    calories += bonusCarbs * 4;
+    notes.push(`actividad de hoy: +${fmtNum(bonusCarbs)}g carbos (~${fmtNum(activityKcal)} kcal)`);
+  }
+
+  return { ...targets, carbs, calories, adjustmentNotes: notes };
 }
 
 // Sugerencia simple y gratuita para compensar un exceso de calorias: una
@@ -2006,7 +2093,7 @@ function suggestFixForExcess(overKcalBy) {
 // cuanta comida (kcal/proteina) queda por cargar, y si ya se registro el
 // entrenamiento del dia (segun el split lunes-viernes; sabado/domingo es
 // descanso y no se evalua entrenamiento).
-function computeDayVerdict({ totals, targets, logs, config }) {
+function computeDayVerdict({ totals, targets, logs, config, suggestFoodId }) {
   if (!targets) {
     return { tone: "info", text: "Definí tus objetivos diarios arriba para ver acá qué te falta hoy." };
   }
@@ -2026,6 +2113,7 @@ function computeDayVerdict({ totals, targets, logs, config }) {
   const parts = [];
   let worstTone = "ok";
   let suggestion = null;
+  let proteinGapFood = null;
 
   if (kcalTarget > 0 && overKcalBy > kcalTarget * 0.1) {
     parts.push(`te pasaste por ${fmtNum(overKcalBy)} kcal`);
@@ -2039,8 +2127,13 @@ function computeDayVerdict({ totals, targets, logs, config }) {
     if (remainingProtein > 5) {
       parts.push(`${fmtNum(remainingProtein)}g de proteína`);
       if (worstTone === "ok") worstTone = "warn";
-      const food = suggestFoodForProtein(remainingProtein);
-      if (food) suggestion = `Con ${food.label} (~${fmtNum(food.kcal)} kcal) lo cubrís.`;
+      const food = suggestFoodForProtein(remainingProtein, suggestFoodId);
+      if (food) {
+        proteinGapFood = food;
+        suggestion = `Con ${food.label} (~${fmtNum(food.kcal)} kcal, ${fmtNum(food.protein)}g proteína) ${
+          food.capped ? "cubrís una parte — el resto sumalo en otra comida." : "lo cubrís."
+        }`;
+      }
     }
   }
 
@@ -2052,7 +2145,7 @@ function computeDayVerdict({ totals, targets, logs, config }) {
 
   if (parts.length === 0) {
     const trainingBit = isRestDay ? "hoy es descanso" : "ya entrenaste";
-    return { tone: "ok", text: `Vas perfecto: cumpliste con la comida y ${trainingBit}.`, suggestion: null };
+    return { tone: "ok", text: `Vas perfecto: cumpliste con la comida y ${trainingBit}.`, suggestion: null, proteinGapFood: null };
   }
 
   const joined =
@@ -2060,14 +2153,33 @@ function computeDayVerdict({ totals, targets, logs, config }) {
       ? parts[0]
       : parts.slice(0, -1).join(", ") + " y " + parts[parts.length - 1];
 
-  return { tone: worstTone, text: `Te falta: ${joined}.`, suggestion };
+  return { tone: worstTone, text: `Te falta: ${joined}.`, suggestion, proteinGapFood };
 }
 
-function DayVerdictCard({ verdict }) {
+const PROTEIN_FOODS = FOOD_DB.filter((f) => f.cat === "Proteínas");
+
+function DayVerdictCard({ verdict, onPickFood }) {
   return (
     <section className={"card verdict-card verdict-" + verdict.tone}>
       <div className="verdict-text">{verdict.text}</div>
       {verdict.suggestion && <div className="verdict-suggestion">{verdict.suggestion}</div>}
+      {verdict.proteinGapFood && (
+        <div className="verdict-food-picker">
+          <span>¿Tenés otra cosa a mano?</span>
+          <div className="select-wrap select-wrap-sm">
+            <select
+              className="select"
+              value={verdict.proteinGapFood.foodId}
+              onChange={(e) => onPickFood(e.target.value)}
+            >
+              {PROTEIN_FOODS.map((f) => (
+                <option key={f.id} value={f.id}>{f.name}</option>
+              ))}
+            </select>
+            <ChevronDown size={14} className="select-chevron" />
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -2988,6 +3100,10 @@ const CSS = `
 .verdict-card { padding: 14px 16px; border-left: 3px solid; }
 .verdict-text { font-size: 14px; font-weight: 600; line-height: 1.4; }
 .verdict-suggestion { font-size: 12.5px; font-weight: 400; line-height: 1.4; margin-top: 6px; color: #C7CDD6; }
+.verdict-food-picker { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.verdict-food-picker span { font-size: 12px; color: #8B93A0; white-space: nowrap; }
+.select-wrap-sm { flex: 1; }
+.select-wrap-sm .select { font-size: 12.5px; padding: 6px 28px 6px 10px; }
 .verdict-ok { border-color: #4CAF7D; background: rgba(76,175,125,0.10); }
 .verdict-ok .verdict-text { color: #4CAF7D; }
 .verdict-warn { border-color: #C08A3E; background: rgba(192,138,62,0.10); }
