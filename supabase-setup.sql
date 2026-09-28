@@ -81,6 +81,14 @@ create table if not exists nutrition_targets (
   updated_at timestamptz default now()
 );
 
+-- Datos para estimar % de grasa corporal (metodo US Navy) y la meta fisica:
+-- altura y contorno de cuello (fijos, se cargan una vez) mas el rango de
+-- grasa corporal objetivo que el usuario quiere alcanzar.
+alter table nutrition_targets add column if not exists height_cm numeric;
+alter table nutrition_targets add column if not exists neck_cm numeric;
+alter table nutrition_targets add column if not exists target_bf_low numeric;
+alter table nutrition_targets add column if not exists target_bf_high numeric;
+
 -- Comidas registradas, con sus macros. meal_type es texto libre (desayuno,
 -- almuerzo, merienda, cena, pre-entreno, post-entreno, otro) para no atarse
 -- a un enum rigido.

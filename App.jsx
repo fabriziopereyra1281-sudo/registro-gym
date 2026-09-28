@@ -173,7 +173,16 @@ function mapCheckinRow(row) {
 }
 function mapTargetsRow(row) {
   if (!row) return null;
-  return { calories: row.calories, protein: row.protein, carbs: row.carbs, fat: row.fat };
+  return {
+    calories: row.calories,
+    protein: row.protein,
+    carbs: row.carbs,
+    fat: row.fat,
+    heightCm: row.height_cm,
+    neckCm: row.neck_cm,
+    targetBfLow: row.target_bf_low,
+    targetBfHigh: row.target_bf_high,
+  };
 }
 function mapSupplementRow(row) {
   return { id: row.id, name: row.name, dose: row.dose, timing: row.timing, active: row.active };
@@ -464,12 +473,20 @@ export default function App() {
   }
 
   async function saveTargets(entry) {
+    // Se combina con lo que ya habia guardado: cada tarjeta (objetivos,
+    // meta fisica) manda solo sus propios campos, y esto evita que una
+    // pise los datos que guardo la otra en la misma fila.
+    const merged = { ...nutritionTargets, ...entry };
     const row = {
       user_id: session.user.id,
-      calories: entry.calories ?? null,
-      protein: entry.protein ?? null,
-      carbs: entry.carbs ?? null,
-      fat: entry.fat ?? null,
+      calories: merged.calories ?? null,
+      protein: merged.protein ?? null,
+      carbs: merged.carbs ?? null,
+      fat: merged.fat ?? null,
+      height_cm: merged.heightCm ?? null,
+      neck_cm: merged.neckCm ?? null,
+      target_bf_low: merged.targetBfLow ?? null,
+      target_bf_high: merged.targetBfHigh ?? null,
       updated_at: new Date().toISOString(),
     };
     const { data, error } = await supabase
@@ -1864,6 +1881,10 @@ function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwL
     const sorted = [...bwLogs].filter((b) => b.weight != null).sort((a, b) => (a.date < b.date ? 1 : -1));
     return sorted[0]?.weight ?? null;
   }, [bwLogs]);
+  const latestWaist = useMemo(() => {
+    const sorted = [...bwLogs].filter((b) => b.waist != null).sort((a, b) => (a.date < b.date ? 1 : -1));
+    return sorted[0]?.waist ?? null;
+  }, [bwLogs]);
 
   const todaysMeals = useMemo(
     () => mealLogs.filter((m) => m.date === todayISO()),
@@ -1893,6 +1914,13 @@ function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwL
       <TargetsCard targets={targets} onSave={saveTargets} latestWeight={latestWeight} />
 
       <DayVerdictCard verdict={dayVerdict} />
+
+      <GoalCard
+        targets={targets}
+        onSave={saveTargets}
+        latestWeight={latestWeight}
+        latestWaist={latestWaist}
+      />
 
       <section className="card">
         <div className="section-title">Hoy</div>
@@ -2189,6 +2217,158 @@ function TargetsCard({ targets, onSave, latestWeight }) {
         <NumInput placeholder="Grasas (g)" value={fat} onChange={setFat} />
       </div>
       <button className="save-btn" onClick={submit}>Guardar objetivos</button>
+    </section>
+  );
+}
+
+// Estimacion de % de grasa corporal por el metodo de la Marina de EE.UU.
+// (circunferencias: cintura, cuello, altura). No reemplaza un estudio real
+// (DEXA/bioimpedancia de calidad), pero es el estandar gratuito mas usado
+// cuando no se tiene acceso a eso -- margen de error tipico +-3-4%.
+function computeBodyFatNavy({ weightKg, waistCm, neckCm, heightCm }) {
+  if (!weightKg || !waistCm || !neckCm || !heightCm || waistCm <= neckCm) return null;
+  const bf =
+    495 /
+      (1.0324 - 0.19077 * Math.log10(waistCm - neckCm) + 0.15456 * Math.log10(heightCm)) -
+    450;
+  if (!isFinite(bf)) return null;
+  return Math.max(3, Math.min(50, bf));
+}
+
+// A partir del % de grasa actual y el deficit calorico diario, estima cuanto
+// falta (en kg) y cuantas semanas tomaria llegar a cada punta del rango de
+// grasa corporal objetivo, asumiendo que la masa magra se mantiene fija
+// (que es justamente el objetivo de la proteina alta ya configurada) y que
+// 1 kg de grasa equivale a ~7700 kcal.
+function computeGoalProgress({ weightKg, waistCm, neckCm, heightCm, targetBfLow, targetBfHigh, dailyDeficitKcal }) {
+  const bf = computeBodyFatNavy({ weightKg, waistCm, neckCm, heightCm });
+  if (bf == null) return null;
+
+  const fatMass = weightKg * (bf / 100);
+  const leanMass = weightKg - fatMass;
+  const weeklyFatLossKg = dailyDeficitKcal > 0 ? (dailyDeficitKcal * 7) / 7700 : 0;
+
+  function milestone(targetBf) {
+    if (!targetBf) return null;
+    const targetWeight = leanMass / (1 - targetBf / 100);
+    const fatToLose = Math.max(0, weightKg - targetWeight);
+    const weeks = fatToLose > 0 && weeklyFatLossKg > 0 ? fatToLose / weeklyFatLossKg : 0;
+    return { targetBf, targetWeight, fatToLose, weeks };
+  }
+
+  return {
+    bf,
+    fatMass,
+    leanMass,
+    weeklyFatLossKg,
+    high: milestone(targetBfHigh), // punta mas alta del rango: primer hito, mas cerca
+    low: milestone(targetBfLow), // punta mas baja del rango: meta final
+  };
+}
+
+function GoalCard({ targets, onSave, latestWeight, latestWaist }) {
+  const hasBaseData = targets?.heightCm && targets?.neckCm;
+  const [editing, setEditing] = useState(!hasBaseData);
+  const [heightCm, setHeightCm] = useState(targets?.heightCm != null ? toInput(targets.heightCm) : "");
+  const [neckCm, setNeckCm] = useState(targets?.neckCm != null ? toInput(targets.neckCm) : "");
+  const [targetBfLow, setTargetBfLow] = useState(targets?.targetBfLow != null ? toInput(targets.targetBfLow) : "12");
+  const [targetBfHigh, setTargetBfHigh] = useState(targets?.targetBfHigh != null ? toInput(targets.targetBfHigh) : "15");
+
+  function submit() {
+    onSave({
+      heightCm: toNum(heightCm),
+      neckCm: toNum(neckCm),
+      targetBfLow: toNum(targetBfLow),
+      targetBfHigh: toNum(targetBfHigh),
+    });
+    setEditing(false);
+  }
+
+  const maintenance = latestWeight ? latestWeight * 33 : null;
+  const dailyDeficitKcal = maintenance && targets?.calories ? maintenance - targets.calories : 0;
+
+  const progress = useMemo(() => {
+    if (!hasBaseData || !latestWeight || !latestWaist) return null;
+    return computeGoalProgress({
+      weightKg: latestWeight,
+      waistCm: latestWaist,
+      neckCm: targets.neckCm,
+      heightCm: targets.heightCm,
+      targetBfLow: targets.targetBfLow,
+      targetBfHigh: targets.targetBfHigh,
+      dailyDeficitKcal,
+    });
+  }, [hasBaseData, latestWeight, latestWaist, targets, dailyDeficitKcal]);
+
+  if (!editing && hasBaseData) {
+    return (
+      <section className="card">
+        <button className="card-head" onClick={() => setEditing(true)}>
+          <div>
+            <div className="section-title" style={{ marginBottom: 2 }}>Meta física</div>
+            <div className="section-sub mono" style={{ marginBottom: 0 }}>
+              {progress ? `${fmtNum(progress.bf)}% grasa estimada · meta ${fmtNum(targets.targetBfLow)}–${fmtNum(targets.targetBfHigh)}%` : "Cargá tu peso y cintura para ver el avance"}
+            </div>
+          </div>
+          <div className="card-icon"><Pencil size={15} /></div>
+        </button>
+
+        {progress && (
+          <div className="cardlist" style={{ marginTop: 10 }}>
+            <div className="breakdown">
+              <div className="breakdown-row">
+                <span>Composición estimada</span>
+                <span className="mono">
+                  {fmtNum(progress.fatMass)} kg grasa · {fmtNum(progress.leanMass)} kg magra ({fmtNum(progress.bf)}%)
+                </span>
+              </div>
+              {progress.high && progress.high.fatToLose > 0 && (
+                <div className="breakdown-row">
+                  <span>Primer hito ({fmtNum(targets.targetBfHigh)}%)</span>
+                  <span className="mono">
+                    faltan {fmtNum(progress.high.fatToLose)} kg
+                    {progress.weeklyFatLossKg > 0 ? ` · ~${Math.ceil(progress.high.weeks)} semanas al ritmo actual` : ""}
+                  </span>
+                </div>
+              )}
+              {progress.low && progress.low.fatToLose > 0 && (
+                <div className="breakdown-row">
+                  <span>Meta final ({fmtNum(targets.targetBfLow)}%)</span>
+                  <span className="mono">
+                    faltan {fmtNum(progress.low.fatToLose)} kg
+                    {progress.weeklyFatLossKg > 0 ? ` · ~${Math.ceil(progress.low.weeks)} semanas al ritmo actual` : ""}
+                  </span>
+                </div>
+              )}
+              {progress.low && progress.low.fatToLose <= 0 && (
+                <div className="breakdown-note">Ya estás dentro de tu rango objetivo. 🎉</div>
+              )}
+              {progress.weeklyFatLossKg <= 0 && (
+                <div className="breakdown-note">Definí tus objetivos diarios (con déficit) arriba para poder estimar el tiempo.</div>
+              )}
+            </div>
+          </div>
+        )}
+      </section>
+    );
+  }
+
+  return (
+    <section className="card">
+      <div className="section-title">Meta física</div>
+      <div className="section-sub">
+        Altura y cuello se usan para estimar tu % de grasa corporal (método US Navy) a partir de tu peso y cintura — se cargan una sola vez.
+      </div>
+      <div className="side-grid two" style={{ marginTop: 10 }}>
+        <NumInput placeholder="Altura (cm)" decimal={false} value={heightCm} onChange={setHeightCm} />
+        <NumInput placeholder="Cuello (cm)" value={neckCm} onChange={setNeckCm} />
+      </div>
+      <div className="section-sub" style={{ marginTop: 12 }}>Rango de grasa corporal al que querés llegar</div>
+      <div className="side-grid two" style={{ marginTop: 6 }}>
+        <NumInput placeholder="Mínimo (%)" value={targetBfLow} onChange={setTargetBfLow} />
+        <NumInput placeholder="Máximo (%)" value={targetBfHigh} onChange={setTargetBfHigh} />
+      </div>
+      <button className="save-btn" onClick={submit}>Guardar meta</button>
     </section>
   );
 }
