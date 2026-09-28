@@ -207,6 +207,48 @@ function mapMealRow(row) {
 
 const MEAL_TYPES = ["Desayuno", "Almuerzo", "Merienda", "Cena", "Pre-entreno", "Post-entreno", "Otro"];
 
+// Base de alimentos comunes y faciles de conseguir, con sus macros. "unit"
+// marca si la cantidad se carga por porcion habitual (ej: 1 huevo, 1 scoop)
+// en vez de por gramos -- en ese caso kcal/protein/carbs/fat ya son los de
+// UNA de esas porciones, no de 100g. Es lo que permite calcular solo, sin
+// que el usuario tenga que saber cuanta proteina tiene nada.
+const FOOD_DB = [
+  { id: "pollo", name: "Pechuga de pollo", cat: "Proteínas", unit: false, kcal: 165, protein: 31, carbs: 0, fat: 3.6 },
+  { id: "carne_magra", name: "Carne magra (nalga/lomo)", cat: "Proteínas", unit: false, kcal: 190, protein: 29, carbs: 0, fat: 8 },
+  { id: "carne_picada", name: "Carne picada magra", cat: "Proteínas", unit: false, kcal: 210, protein: 26, carbs: 0, fat: 11 },
+  { id: "huevo", name: "Huevo entero", cat: "Proteínas", unit: true, unitWord: "unidad", unitWordPlural: "unidades", kcal: 70, protein: 6, carbs: 0.5, fat: 5 },
+  { id: "atun", name: "Atún al natural", cat: "Proteínas", unit: false, kcal: 116, protein: 26, carbs: 0, fat: 1 },
+  { id: "pescado", name: "Merluza / pescado blanco", cat: "Proteínas", unit: false, kcal: 90, protein: 19, carbs: 0, fat: 1 },
+  { id: "yogur_griego", name: "Yogur griego natural", cat: "Proteínas", unit: false, kcal: 65, protein: 10, carbs: 4, fat: 2 },
+  { id: "queso_cottage", name: "Queso cottage / fresco", cat: "Proteínas", unit: false, kcal: 98, protein: 11, carbs: 3, fat: 4 },
+  { id: "whey", name: "Whey proteína", cat: "Proteínas", unit: true, unitWord: "scoop", unitWordPlural: "scoops", kcal: 120, protein: 24, carbs: 3, fat: 1 },
+  { id: "arroz", name: "Arroz blanco cocido", cat: "Carbohidratos", unit: false, kcal: 130, protein: 2.7, carbs: 28, fat: 0.3 },
+  { id: "avena", name: "Avena", cat: "Carbohidratos", unit: true, unitWord: "porción de 40 g", unitWordPlural: "porciones de 40 g", kcal: 150, protein: 5, carbs: 27, fat: 3 },
+  { id: "papa", name: "Papa cocida", cat: "Carbohidratos", unit: false, kcal: 87, protein: 2, carbs: 20, fat: 0 },
+  { id: "batata", name: "Batata cocida", cat: "Carbohidratos", unit: false, kcal: 86, protein: 1.6, carbs: 20, fat: 0.1 },
+  { id: "pan_integral", name: "Pan integral", cat: "Carbohidratos", unit: true, unitWord: "rebanada", unitWordPlural: "rebanadas", kcal: 75, protein: 3, carbs: 13, fat: 1 },
+  { id: "pan_lactal", name: "Pan lactal blanco", cat: "Carbohidratos", unit: true, unitWord: "rebanada", unitWordPlural: "rebanadas", kcal: 65, protein: 2, carbs: 12, fat: 1 },
+  { id: "fideos", name: "Fideos cocidos", cat: "Carbohidratos", unit: false, kcal: 158, protein: 5.8, carbs: 31, fat: 0.9 },
+  { id: "banana", name: "Banana", cat: "Carbohidratos", unit: true, unitWord: "unidad", unitWordPlural: "unidades", kcal: 105, protein: 1.3, carbs: 27, fat: 0.4 },
+  { id: "manzana", name: "Manzana", cat: "Carbohidratos", unit: true, unitWord: "unidad", unitWordPlural: "unidades", kcal: 95, protein: 0.5, carbs: 25, fat: 0.3 },
+  { id: "aceite_oliva", name: "Aceite de oliva", cat: "Grasas", unit: true, unitWord: "cucharada", unitWordPlural: "cucharadas", kcal: 120, protein: 0, carbs: 0, fat: 14 },
+  { id: "palta", name: "Palta", cat: "Grasas", unit: true, unitWord: "mitad", unitWordPlural: "mitades", kcal: 160, protein: 2, carbs: 8.5, fat: 15 },
+  { id: "almendras", name: "Almendras / nueces", cat: "Grasas", unit: true, unitWord: "puñado de 20 g", unitWordPlural: "puñados de 20 g", kcal: 120, protein: 4, carbs: 4, fat: 11 },
+  { id: "mani", name: "Manteca de maní", cat: "Grasas", unit: true, unitWord: "cucharada", unitWordPlural: "cucharadas", kcal: 95, protein: 4, carbs: 3, fat: 8 },
+];
+
+function computeFoodMacros(foodId, qty) {
+  const food = FOOD_DB.find((f) => f.id === foodId);
+  if (!food || !qty || qty <= 0) return null;
+  const factor = food.unit ? qty : qty / 100;
+  return {
+    kcal: Math.round(food.kcal * factor),
+    protein: Number((food.protein * factor).toFixed(1)),
+    carbs: Number((food.carbs * factor).toFixed(1)),
+    fat: Number((food.fat * factor).toFixed(1)),
+  };
+}
+
 const PAIN_ZONES = [
   { key: "codo_d", label: "Codo der." },
   { key: "codo_i", label: "Codo izq." },
@@ -1943,47 +1985,154 @@ function TargetsCard({ targets, onSave }) {
 
 function MealForm({ onSave }) {
   const [mealType, setMealType] = useState(null);
-  const [name, setName] = useState("");
-  const [calories, setCalories] = useState("");
-  const [protein, setProtein] = useState("");
-  const [carbs, setCarbs] = useState("");
-  const [fat, setFat] = useState("");
+  const [items, setItems] = useState([]);
   const [notes, setNotes] = useState("");
+  const [pickFoodId, setPickFoodId] = useState(FOOD_DB[0].id);
+  const [pickQty, setPickQty] = useState("");
+  const [customOpen, setCustomOpen] = useState(false);
+  const [customName, setCustomName] = useState("");
+  const [customKcal, setCustomKcal] = useState("");
+  const [customProtein, setCustomProtein] = useState("");
+  const [customCarbs, setCustomCarbs] = useState("");
+  const [customFat, setCustomFat] = useState("");
+
+  const categories = useMemo(() => [...new Set(FOOD_DB.map((f) => f.cat))], []);
+  const pickedFood = FOOD_DB.find((f) => f.id === pickFoodId);
+
+  const totals = useMemo(
+    () =>
+      items.reduce(
+        (acc, it) => ({
+          kcal: acc.kcal + it.kcal,
+          protein: acc.protein + it.protein,
+          carbs: acc.carbs + it.carbs,
+          fat: acc.fat + it.fat,
+        }),
+        { kcal: 0, protein: 0, carbs: 0, fat: 0 }
+      ),
+    [items]
+  );
+
+  function addFromDb() {
+    const qty = toNum(pickQty);
+    const m = computeFoodMacros(pickFoodId, qty);
+    if (!m) return;
+    const word = qty === 1 ? pickedFood.unitWord : pickedFood.unitWordPlural;
+    const label = pickedFood.unit ? `${fmtNum(qty)} ${word} de ${pickedFood.name}` : `${fmtNum(qty)} g de ${pickedFood.name}`;
+    setItems((prev) => [...prev, { id: uid(), label, ...m }]);
+    setPickQty("");
+  }
+
+  function addCustom() {
+    if (!customName.trim()) return;
+    setItems((prev) => [
+      ...prev,
+      {
+        id: uid(),
+        label: customName.trim(),
+        kcal: toNum(customKcal) || 0,
+        protein: toNum(customProtein) || 0,
+        carbs: toNum(customCarbs) || 0,
+        fat: toNum(customFat) || 0,
+      },
+    ]);
+    setCustomName(""); setCustomKcal(""); setCustomProtein(""); setCustomCarbs(""); setCustomFat(""); setCustomOpen(false);
+  }
+
+  function removeItem(id) {
+    setItems((prev) => prev.filter((it) => it.id !== id));
+  }
 
   function submit() {
-    if (!name.trim()) return;
+    if (items.length === 0) return;
     onSave({
       date: todayISO(),
       mealType,
-      name: name.trim(),
-      calories: toNum(calories),
-      protein: toNum(protein),
-      carbs: toNum(carbs),
-      fat: toNum(fat),
+      name: items.map((it) => it.label).join(", "),
+      calories: Math.round(totals.kcal),
+      protein: Number(totals.protein.toFixed(1)),
+      carbs: Number(totals.carbs.toFixed(1)),
+      fat: Number(totals.fat.toFixed(1)),
       notes: notes.trim(),
     });
-    setMealType(null); setName(""); setCalories(""); setProtein(""); setCarbs(""); setFat(""); setNotes("");
+    setItems([]); setMealType(null); setNotes("");
   }
 
   return (
     <section className="card">
       <div className="section-title">Nueva comida</div>
+      <div className="section-sub">Elegí el alimento y la cantidad — las calorías y macros se calculan solas</div>
+
       <div className="chiprow wrap" style={{ marginBottom: 10 }}>
         {MEAL_TYPES.map((t) => (
           <button key={t} className={"chip" + (mealType === t ? " chip-active" : "")} onClick={() => setMealType(t)}>{t}</button>
         ))}
       </div>
-      <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Qué comiste" />
-      <div className="side-grid two" style={{ marginTop: 10 }}>
-        <NumInput placeholder="Calorías (kcal)" decimal={false} value={calories} onChange={setCalories} />
-        <NumInput placeholder="Proteína (g)" value={protein} onChange={setProtein} />
+
+      <div className="side-grid two">
+        <div className="select-wrap">
+          <select className="select" value={pickFoodId} onChange={(e) => setPickFoodId(e.target.value)}>
+            {categories.map((cat) => (
+              <optgroup key={cat} label={cat}>
+                {FOOD_DB.filter((f) => f.cat === cat).map((f) => (
+                  <option key={f.id} value={f.id}>{f.name}</option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+          <ChevronDown size={16} className="select-chevron" />
+        </div>
+        <NumInput
+          placeholder={pickedFood.unit ? `Cant. (${pickedFood.unitWordPlural})` : "Gramos"}
+          value={pickQty}
+          onChange={setPickQty}
+        />
       </div>
-      <div className="side-grid two" style={{ marginTop: 10 }}>
-        <NumInput placeholder="Carbohidratos (g)" value={carbs} onChange={setCarbs} />
-        <NumInput placeholder="Grasas (g)" value={fat} onChange={setFat} />
-      </div>
+      <button className="save-btn" style={{ marginTop: 10, background: "rgba(192,138,62,0.16)", color: "#C08A3E" }} onClick={addFromDb}>
+        + Agregar a la comida
+      </button>
+
+      <button className="link-btn" onClick={() => setCustomOpen((v) => !v)}>
+        {customOpen ? "Cancelar" : "¿No está en la lista? Cargar manual"}
+      </button>
+
+      {customOpen && (
+        <div className="card-form" style={{ marginTop: 2 }}>
+          <input className="input" value={customName} onChange={(e) => setCustomName(e.target.value)} placeholder="Nombre del alimento" />
+          <div className="side-grid two">
+            <NumInput placeholder="Calorías (kcal)" decimal={false} value={customKcal} onChange={setCustomKcal} />
+            <NumInput placeholder="Proteína (g)" value={customProtein} onChange={setCustomProtein} />
+          </div>
+          <div className="side-grid two">
+            <NumInput placeholder="Carbohidratos (g)" value={customCarbs} onChange={setCustomCarbs} />
+            <NumInput placeholder="Grasas (g)" value={customFat} onChange={setCustomFat} />
+          </div>
+          <button className="save-btn" onClick={addCustom}>Agregar a la comida</button>
+        </div>
+      )}
+
+      {items.length > 0 && (
+        <div className="cardlist" style={{ marginTop: 12 }}>
+          {items.map((it) => (
+            <div key={it.id} className="hist-row">
+              <div className="hist-ex">{it.label}</div>
+              <div className="hist-actions">
+                <span className="hist-detail mono" style={{ marginRight: 2 }}>{it.kcal} kcal</span>
+                <button className="del-btn" onClick={() => removeItem(it.id)}><Trash2 size={15} /></button>
+              </div>
+            </div>
+          ))}
+          <div className="delta-row" style={{ marginTop: 2 }}>
+            <span className="mono">Total {Math.round(totals.kcal)} kcal</span>
+            <span className="mono">P {fmtNum(Number(totals.protein.toFixed(1)))}g</span>
+            <span className="mono">C {fmtNum(Number(totals.carbs.toFixed(1)))}g</span>
+            <span className="mono">G {fmtNum(Number(totals.fat.toFixed(1)))}g</span>
+          </div>
+        </div>
+      )}
+
       <input className="input" style={{ marginTop: 10 }} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notas (opcional)" />
-      <button className="save-btn" onClick={submit}>Guardar comida</button>
+      <button className="save-btn" disabled={items.length === 0} onClick={submit}>Guardar comida</button>
     </section>
   );
 }
@@ -2437,5 +2586,7 @@ const CSS = `
 .supp-row { background: #242A31; border: 1px solid rgba(237,234,227,0.06); border-radius: 12px; padding: 12px 14px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .supp-check { display: flex; align-items: center; gap: 10px; flex: 1; cursor: pointer; }
 .supp-check input[type="checkbox"] { width: 20px; height: 20px; accent-color: #C08A3E; flex-shrink: 0; }
+
+.link-btn { background: none; border: none; color: #C08A3E; font-size: 12.5px; font-weight: 600; padding: 10px 0 2px; text-decoration: underline; text-align: left; }
 
 `;
