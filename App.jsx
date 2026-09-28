@@ -2350,7 +2350,7 @@ function computeBodyFatNavy({ weightKg, waistCm, neckCm, heightCm }) {
       (1.0324 - 0.19077 * Math.log10(waistCm - neckCm) + 0.15456 * Math.log10(heightCm)) -
     450;
   if (!isFinite(bf)) return null;
-  return Math.max(3, Math.min(50, bf));
+  return Math.round(Math.max(3, Math.min(50, bf)) * 10) / 10;
 }
 
 // A partir del % de grasa actual y el deficit calorico diario, estima cuanto
@@ -2362,14 +2362,14 @@ function computeGoalProgress({ weightKg, waistCm, neckCm, heightCm, targetBfLow,
   const bf = computeBodyFatNavy({ weightKg, waistCm, neckCm, heightCm });
   if (bf == null) return null;
 
-  const fatMass = weightKg * (bf / 100);
-  const leanMass = weightKg - fatMass;
+  const fatMass = Math.round(weightKg * (bf / 100) * 10) / 10;
+  const leanMass = Math.round((weightKg - fatMass) * 10) / 10;
   const weeklyFatLossKg = dailyDeficitKcal > 0 ? (dailyDeficitKcal * 7) / 7700 : 0;
 
   function milestone(targetBf) {
     if (!targetBf) return null;
     const targetWeight = leanMass / (1 - targetBf / 100);
-    const fatToLose = Math.max(0, weightKg - targetWeight);
+    const fatToLose = Math.round(Math.max(0, weightKg - targetWeight) * 10) / 10;
     const weeks = fatToLose > 0 && weeklyFatLossKg > 0 ? fatToLose / weeklyFatLossKg : 0;
     return { targetBf, targetWeight, fatToLose, weeks };
   }
