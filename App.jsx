@@ -1961,6 +1961,40 @@ function computeAutoTargets(weightKg) {
   return { calories, protein, carbs, fat };
 }
 
+function AutoBreakdown({ weight, auto }) {
+  const maintenance = Math.round(weight * 33);
+  const proteinKcal = auto.protein * 4;
+  const fatKcal = auto.fat * 9;
+  const carbsKcal = auto.carbs * 4;
+  return (
+    <div className="breakdown">
+      <div className="breakdown-row">
+        <span>Mantenimiento estimado</span>
+        <span className="mono">{fmtNum(weight)} kg × 33 kcal/kg = {fmtNum(maintenance)} kcal</span>
+      </div>
+      <div className="breakdown-row">
+        <span>Déficit leve (15%)</span>
+        <span className="mono">{fmtNum(maintenance)} × 0,85 = {fmtNum(auto.calories)} kcal</span>
+      </div>
+      <div className="breakdown-row">
+        <span>Proteína</span>
+        <span className="mono">{fmtNum(weight)} kg × 2,2 g/kg = {fmtNum(auto.protein)} g ({fmtNum(proteinKcal)} kcal)</span>
+      </div>
+      <div className="breakdown-row">
+        <span>Grasas</span>
+        <span className="mono">{fmtNum(weight)} kg × 0,8 g/kg = {fmtNum(auto.fat)} g ({fmtNum(fatKcal)} kcal)</span>
+      </div>
+      <div className="breakdown-row">
+        <span>Carbohidratos</span>
+        <span className="mono">resto de las kcal ÷ 4 = {fmtNum(auto.carbs)} g ({fmtNum(carbsKcal)} kcal)</span>
+      </div>
+      <div className="breakdown-note">
+        Regla práctica para alguien que entrena pesas ~5 días/semana y quiere bajar grasa preservando músculo. No reemplaza un análisis de un nutricionista, pero es un punto de partida razonable — se recalcula solo cada vez que cargues un peso nuevo.
+      </div>
+    </div>
+  );
+}
+
 function TargetsCard({ targets, onSave, latestWeight }) {
   const auto = useMemo(() => computeAutoTargets(latestWeight), [latestWeight]);
   const [calories, setCalories] = useState(targets?.calories != null ? toInput(targets.calories) : auto ? String(auto.calories) : "");
@@ -1968,6 +2002,7 @@ function TargetsCard({ targets, onSave, latestWeight }) {
   const [carbs, setCarbs] = useState(targets?.carbs != null ? toInput(targets.carbs) : auto ? String(auto.carbs) : "");
   const [fat, setFat] = useState(targets?.fat != null ? toInput(targets.fat) : auto ? String(auto.fat) : "");
   const [editing, setEditing] = useState(!targets);
+  const [showDetail, setShowDetail] = useState(false);
 
   function applyAuto() {
     if (!auto) return;
@@ -1994,6 +2029,14 @@ function TargetsCard({ targets, onSave, latestWeight }) {
           </div>
           <div className="card-icon"><Pencil size={15} /></div>
         </button>
+        {auto && (
+          <>
+            <button className="link-btn" onClick={() => setShowDetail((v) => !v)}>
+              {showDetail ? "Ocultar cálculo" : "¿Cómo se calcula esto?"}
+            </button>
+            {showDetail && <AutoBreakdown weight={latestWeight} auto={auto} />}
+          </>
+        )}
       </section>
     );
   }
@@ -2008,16 +2051,22 @@ function TargetsCard({ targets, onSave, latestWeight }) {
       </div>
 
       {auto && (
-        <button
-          className="save-btn"
-          style={{ marginBottom: 10, background: "rgba(192,138,62,0.16)", color: "#C08A3E" }}
-          onClick={applyAuto}
-        >
-          Calcular automático según mi peso
-        </button>
+        <>
+          <button
+            className="save-btn"
+            style={{ marginBottom: 4, background: "rgba(192,138,62,0.16)", color: "#C08A3E" }}
+            onClick={applyAuto}
+          >
+            Calcular automático según mi peso
+          </button>
+          <button className="link-btn" onClick={() => setShowDetail((v) => !v)}>
+            {showDetail ? "Ocultar cálculo" : "¿Cómo se calcula esto?"}
+          </button>
+          {showDetail && <AutoBreakdown weight={latestWeight} auto={auto} />}
+        </>
       )}
 
-      <div className="side-grid two">
+      <div className="side-grid two" style={{ marginTop: 10 }}>
         <NumInput placeholder="Calorías (kcal)" decimal={false} value={calories} onChange={setCalories} />
         <NumInput placeholder="Proteína (g)" value={protein} onChange={setProtein} />
       </div>
@@ -2635,5 +2684,11 @@ const CSS = `
 .supp-check input[type="checkbox"] { width: 20px; height: 20px; accent-color: #C08A3E; flex-shrink: 0; }
 
 .link-btn { background: none; border: none; color: #C08A3E; font-size: 12.5px; font-weight: 600; padding: 10px 0 2px; text-decoration: underline; text-align: left; }
+
+.breakdown { margin-top: 10px; padding: 12px; background: #1B1F24; border-radius: 10px; display: flex; flex-direction: column; gap: 8px; }
+.breakdown-row { display: flex; flex-direction: column; gap: 2px; font-size: 12.5px; }
+.breakdown-row > span:first-child { color: #8B93A0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; font-weight: 600; }
+.breakdown-row > span:last-child { color: #EDEAE3; }
+.breakdown-note { font-size: 11.5px; color: #5C6470; line-height: 1.5; padding-top: 4px; border-top: 1px solid rgba(237,234,227,0.08); }
 
 `;
