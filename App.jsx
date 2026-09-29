@@ -239,6 +239,7 @@ const FOOD_DB = [
   { id: "pan_integral", name: "Pan integral", cat: "Carbohidratos", unit: true, unitWord: "rebanada", unitWordPlural: "rebanadas", kcal: 75, protein: 3, carbs: 13, fat: 1 },
   { id: "pan_lactal", name: "Pan lactal blanco", cat: "Carbohidratos", unit: true, unitWord: "rebanada", unitWordPlural: "rebanadas", kcal: 65, protein: 2, carbs: 12, fat: 1 },
   { id: "fideos", name: "Fideos cocidos", cat: "Carbohidratos", unit: false, kcal: 158, protein: 5.8, carbs: 31, fat: 0.9 },
+  { id: "galleta_arroz", name: "Galleta de arroz", cat: "Carbohidratos", unit: true, unitWord: "unidad", unitWordPlural: "unidades", kcal: 35, protein: 0.7, carbs: 7.5, fat: 0.3 },
   { id: "banana", name: "Banana", cat: "Carbohidratos", unit: true, unitWord: "unidad", unitWordPlural: "unidades", kcal: 105, protein: 1.3, carbs: 27, fat: 0.4 },
   { id: "manzana", name: "Manzana", cat: "Carbohidratos", unit: true, unitWord: "unidad", unitWordPlural: "unidades", kcal: 95, protein: 0.5, carbs: 25, fat: 0.3 },
   { id: "aceite_oliva", name: "Aceite de oliva", cat: "Grasas", unit: true, unitWord: "cucharada", unitWordPlural: "cucharadas", kcal: 120, protein: 0, carbs: 0, fat: 14 },
