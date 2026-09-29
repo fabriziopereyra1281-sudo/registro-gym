@@ -231,6 +231,7 @@ const FOOD_DB = [
   { id: "pescado", name: "Merluza / pescado blanco", cat: "Proteínas", unit: false, kcal: 90, protein: 19, carbs: 0, fat: 1 },
   { id: "yogur_griego", name: "Yogur griego natural", cat: "Proteínas", unit: false, kcal: 65, protein: 10, carbs: 4, fat: 2 },
   { id: "queso_cottage", name: "Queso cottage / fresco", cat: "Proteínas", unit: false, kcal: 98, protein: 11, carbs: 3, fat: 4 },
+  { id: "queso_blanco_0", name: "Queso blanco descremado (0% grasa)", cat: "Proteínas", unit: true, unitWord: "cucharada", unitWordPlural: "cucharadas", kcal: 7, protein: 1.2, carbs: 0.6, fat: 0 },
   { id: "whey", name: "Whey proteína", cat: "Proteínas", unit: true, unitWord: "scoop", unitWordPlural: "scoops", kcal: 120, protein: 24, carbs: 3, fat: 1 },
   { id: "arroz", name: "Arroz blanco cocido", cat: "Carbohidratos", unit: false, kcal: 130, protein: 2.7, carbs: 28, fat: 0.3 },
   { id: "avena", name: "Avena", cat: "Carbohidratos", unit: true, unitWord: "porción de 40 g", unitWordPlural: "porciones de 40 g", kcal: 150, protein: 5, carbs: 27, fat: 3 },
