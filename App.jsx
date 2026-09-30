@@ -1901,19 +1901,23 @@ function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwL
     () => mealLogs.filter((m) => m.date === todayISO()),
     [mealLogs]
   );
-  const totals = useMemo(
-    () =>
-      todaysMeals.reduce(
-        (acc, m) => ({
-          calories: acc.calories + (m.calories || 0),
-          protein: acc.protein + (m.protein || 0),
-          carbs: acc.carbs + (m.carbs || 0),
-          fat: acc.fat + (m.fat || 0),
-        }),
-        { calories: 0, protein: 0, carbs: 0, fat: 0 }
-      ),
-    [todaysMeals]
-  );
+  const totals = useMemo(() => {
+    const raw = todaysMeals.reduce(
+      (acc, m) => ({
+        calories: acc.calories + (m.calories || 0),
+        protein: acc.protein + (m.protein || 0),
+        carbs: acc.carbs + (m.carbs || 0),
+        fat: acc.fat + (m.fat || 0),
+      }),
+      { calories: 0, protein: 0, carbs: 0, fat: 0 }
+    );
+    return {
+      calories: Math.round(raw.calories),
+      protein: Math.round(raw.protein * 10) / 10,
+      carbs: Math.round(raw.carbs * 10) / 10,
+      fat: Math.round(raw.fat * 10) / 10,
+    };
+  }, [todaysMeals]);
 
   const isRestDay = useMemo(() => !DAY_KEY_BY_WEEKDAY[new Date().getDay()], []);
   const activityKcal = useMemo(() => {
@@ -2115,8 +2119,8 @@ function computeDayVerdict({ totals, targets, logs, config, suggestFoodId }) {
 
   const kcalTarget = targets.calories || 0;
   const proteinTarget = targets.protein || 0;
-  const remainingKcal = kcalTarget - totals.calories;
-  const remainingProtein = proteinTarget - totals.protein;
+  const remainingKcal = Math.round(kcalTarget - totals.calories);
+  const remainingProtein = Math.round((proteinTarget - totals.protein) * 10) / 10;
   const overKcalBy = -remainingKcal;
 
   const parts = [];
