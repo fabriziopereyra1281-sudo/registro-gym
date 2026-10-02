@@ -367,7 +367,7 @@ export default function App() {
       .from("supplements").select("*").eq("user_id", userId).order("created_at", { ascending: true });
     const { data: supplementLogRows } = await supabase
       .from("supplement_logs").select("*").eq("user_id", userId).order("date", { ascending: true });
-    // La escribe la funcion programada de Netlify (coach-weekly-background);
+    // La escribe la funcion /api/coach-weekly (ver ese archivo), disparada por un cron externo;
     // acá solo se lee la última, nunca se inserta desde el navegador.
     const { data: noteRow } = await supabase
       .from("coach_notes").select("*").eq("user_id", userId).order("week_start", { ascending: false }).limit(1).maybeSingle();
