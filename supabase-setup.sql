@@ -214,3 +214,25 @@ create policy "own_supplements" on supplements
 drop policy if exists "own_supplement_logs" on supplement_logs;
 create policy "own_supplement_logs" on supplement_logs
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- Nota semanal del Coach generada por IA: la escribe la funcion programada de
+-- Netlify (con la service role key, que no pasa por RLS) y la lee la app
+-- normalmente con la clave anonima + RLS, igual que el resto de las tablas.
+-- Una fila por usuario y semana (unique) para que volver a correr la funcion
+-- la misma semana actualice la nota en vez de duplicarla.
+create table if not exists coach_notes (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users not null,
+  week_start date not null,
+  tone text,
+  text text not null,
+  model text,
+  created_at timestamptz default now(),
+  unique (user_id, week_start)
+);
+
+alter table coach_notes enable row level security;
+
+drop policy if exists "own_coach_notes" on coach_notes;
+create policy "own_coach_notes" on coach_notes
+  for select using (auth.uid() = user_id);
