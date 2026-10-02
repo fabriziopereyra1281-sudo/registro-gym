@@ -430,7 +430,7 @@ export default function App() {
     const { data, error } = await supabase.from("workout_logs").insert(row).select().single();
     if (!error && data) {
       setLogs((prev) => [...prev, mapLogRow(data)]);
-      showToast("Set guardado");
+      showToast(entry.prLabel ? `🏆 ¡Nuevo PR! ${entry.prLabel}` : "Set guardado");
     }
   }
 
@@ -666,6 +666,21 @@ export default function App() {
     return matches[0] || null;
   }
 
+  // Mejor marca historica de un ejercicio: el peso mas alto cargado alguna
+  // vez (no el ultimo set, el mejor de todos). En unilaterales, cada lado
+  // tiene su propio record porque pueden progresar distinto.
+  function bestEntryFor(exerciseId) {
+    let weight = null, date = null, weightR = null, weightL = null;
+    for (const l of logs) {
+      if (l.exerciseId !== exerciseId) continue;
+      if (l.weight != null && (weight == null || l.weight > weight)) { weight = l.weight; date = l.date; }
+      if (l.weightR != null && (weightR == null || l.weightR > weightR)) weightR = l.weightR;
+      if (l.weightL != null && (weightL == null || l.weightL > weightL)) weightL = l.weightL;
+    }
+    if (weight == null && weightR == null && weightL == null) return null;
+    return { weight, date, weightR, weightL };
+  }
+
   function updateFocus(dayKey, text) {
     persistConfig({ ...config, [dayKey]: { ...config[dayKey], focus: text } });
   }
@@ -749,6 +764,7 @@ export default function App() {
               openForm={openForm}
               setOpenForm={setOpenForm}
               lastEntryFor={lastEntryFor}
+              bestEntryFor={bestEntryFor}
               addLog={addLog}
               editMode={editMode}
               setEditMode={setEditMode}
@@ -1086,7 +1102,7 @@ function CheckInReminder({ bwLogs, addBw, photos, setTab }) {
 
 // ---------------------------------------------------------------------------
 function HoyTab({
-  config, selectedDay, setSelectedDay, openForm, setOpenForm, lastEntryFor, addLog,
+  config, selectedDay, setSelectedDay, openForm, setOpenForm, lastEntryFor, bestEntryFor, addLog,
   editMode, setEditMode, updateFocus, updateNote, addExercise, updateExercise, removeExercise,
   bwLogs, addBw, photos, setTab,
 }) {
@@ -1150,7 +1166,7 @@ function HoyTab({
           ) : (
             day.exercises.map((ex) => (
               <ExerciseCard
-                key={ex.id} exercise={ex} day={selectedDay} last={lastEntryFor(ex.id)}
+                key={ex.id} exercise={ex} day={selectedDay} last={lastEntryFor(ex.id)} best={bestEntryFor(ex.id)}
                 isOpen={openForm === ex.id}
                 onToggle={() => setOpenForm(openForm === ex.id ? null : ex.id)}
                 onSave={(entry) => { addLog(entry); setOpenForm(null); }}
@@ -1163,7 +1179,7 @@ function HoyTab({
   );
 }
 
-function ExerciseCard({ exercise, day, last, isOpen, onToggle, onSave }) {
+function ExerciseCard({ exercise, day, last, best, isOpen, onToggle, onSave }) {
   const [weight, setWeight] = useState("");
   const [reps, setReps] = useState("");
   const [weightR, setWeightR] = useState("");
@@ -1183,23 +1199,50 @@ function ExerciseCard({ exercise, day, last, isOpen, onToggle, onSave }) {
     return `Último: ${fmtNum(last.weight)}kg × ${fmtNum(last.reps)} reps${rirTxt} · ${fmtShort(last.date)}`;
   }
 
+  // Mejor marca historica, para mostrarla siempre visible en la tarjeta (no
+  // solo cuando se festeja un PR nuevo al guardar).
+  function bestLabel() {
+    if (!best) return null;
+    if (exercise.unilateral) {
+      if (best.weightR == null && best.weightL == null) return null;
+      const r = best.weightR != null ? `Der ${fmtNum(best.weightR)}kg` : null;
+      const l = best.weightL != null ? `Izq ${fmtNum(best.weightL)}kg` : null;
+      return [r, l].filter(Boolean).join(" · ");
+    }
+    return best.weight != null ? `${fmtNum(best.weight)}kg` : null;
+  }
+
   function submit() {
     const rirNum = toNum(rir);
     if (exercise.unilateral) {
       const wR = toNum(weightR), wL = toNum(weightL);
       if (wR == null && wL == null) return;
+      // Cada lado puede marcar PR por separado -- un lado mas fuerte que el
+      // otro no deberia opacar que el lado mas flojo tambien mejoro.
+      const prR = wR != null && (best?.weightR == null || wR > best.weightR);
+      const prL = wL != null && (best?.weightL == null || wL > best.weightL);
+      let prLabel = null;
+      if (prR && prL) prLabel = `${exercise.name} (Der y Izq)`;
+      else if (prR) prLabel = `${exercise.name} (Der)`;
+      else if (prL) prLabel = `${exercise.name} (Izq)`;
       onSave({
         date: todayISO(), day, exerciseId: exercise.id, exerciseName: exercise.name, unilateral: true,
-        weightR: wR, repsR: toNum(repsR), weightL: wL, repsL: toNum(repsL), rir: rirNum,
+        weightR: wR, repsR: toNum(repsR), weightL: wL, repsL: toNum(repsL), rir: rirNum, prLabel,
       });
       setWeightR(""); setRepsR(""); setWeightL(""); setRepsL(""); setRir("");
     } else {
       const w = toNum(weight);
       if (w == null) return;
-      onSave({ date: todayISO(), day, exerciseId: exercise.id, exerciseName: exercise.name, unilateral: false, weight: w, reps: toNum(reps), rir: rirNum });
+      const isPR = w != null && (best?.weight == null || w > best.weight);
+      onSave({
+        date: todayISO(), day, exerciseId: exercise.id, exerciseName: exercise.name, unilateral: false,
+        weight: w, reps: toNum(reps), rir: rirNum, prLabel: isPR ? exercise.name : null,
+      });
       setWeight(""); setReps(""); setRir("");
     }
   }
+
+  const bestTxt = bestLabel();
 
   return (
     <div className="card">
@@ -1207,6 +1250,7 @@ function ExerciseCard({ exercise, day, last, isOpen, onToggle, onSave }) {
         <div>
           <div className="ex-name">{exercise.name}</div>
           {target && <div className="target-badge mono">{target}</div>}
+          {bestTxt && <div className="ex-pr mono">🏆 {bestTxt}</div>}
           <div className="ex-last">{lastLabel()}</div>
         </div>
         <div className={"card-icon" + (isOpen ? " open" : "")}>{isOpen ? <X size={16} /> : <Plus size={16} />}</div>
@@ -1254,6 +1298,26 @@ function ProgresoTab({ logs, bwLogs, addBw, config, allExercises, photos, photoU
   }, [allExercises]);
 
   const exerciseInfo = allExercises.find((e) => e.id === selectedExerciseId);
+
+  // Mejor marca de cada ejercicio que ya tenga al menos un set cargado,
+  // ordenados por dia de rutina. Mismo criterio que bestEntryFor() en Hoy:
+  // el peso mas alto de todos los que se cargaron, no el ultimo.
+  const prList = useMemo(() => {
+    return allExercises
+      .map((ex) => {
+        let weight = null, date = null, weightR = null, dateR = null, weightL = null, dateL = null;
+        for (const l of logs) {
+          if (l.exerciseId !== ex.id) continue;
+          if (l.weight != null && (weight == null || l.weight > weight)) { weight = l.weight; date = l.date; }
+          if (l.weightR != null && (weightR == null || l.weightR > weightR)) { weightR = l.weightR; dateR = l.date; }
+          if (l.weightL != null && (weightL == null || l.weightL > weightL)) { weightL = l.weightL; dateL = l.date; }
+        }
+        if (weight == null && weightR == null && weightL == null) return null;
+        return { id: ex.id, name: ex.name, day: ex.day, unilateral: ex.unilateral, weight, date, weightR, dateR, weightL, dateL };
+      })
+      .filter(Boolean)
+      .sort((a, b) => DAY_ORDER.indexOf(a.day) - DAY_ORDER.indexOf(b.day));
+  }, [allExercises, logs]);
 
   const liftData = useMemo(() => {
     return logs.filter((l) => l.exerciseId === selectedExerciseId).sort((a, b) => (a.date > b.date ? 1 : -1))
@@ -1349,6 +1413,31 @@ function ProgresoTab({ logs, bwLogs, addBw, config, allExercises, photos, photoU
                 <Line type="monotone" dataKey="Cintura" stroke={SERIE_2} strokeWidth={2.5} dot={{ r: 3, fill: SERIE_2 }} />
               </LineChart>
             </ResponsiveContainer>
+          </div>
+        </section>
+      )}
+
+      {prList.length > 0 && (
+        <section className="card">
+          <div className="section-title">Récords personales</div>
+          <div className="section-sub">Tu mejor marca de peso en cada ejercicio</div>
+          <div className="cardlist" style={{ marginTop: 8 }}>
+            {prList.map((pr) => (
+              <div key={pr.id} className="hist-row">
+                <div>
+                  <div className="hist-ex">{pr.name}</div>
+                  <div className="hist-detail mono">
+                    {pr.unilateral
+                      ? [
+                          pr.weightR != null ? `Der ${fmtNum(pr.weightR)}kg${pr.dateR ? ` (${fmtShort(pr.dateR)})` : ""}` : null,
+                          pr.weightL != null ? `Izq ${fmtNum(pr.weightL)}kg${pr.dateL ? ` (${fmtShort(pr.dateL)})` : ""}` : null,
+                        ].filter(Boolean).join(" · ")
+                      : `${fmtNum(pr.weight)}kg${pr.date ? ` · ${fmtShort(pr.date)}` : ""}`}
+                  </div>
+                </div>
+                <span style={{ fontSize: 17 }}>🏆</span>
+              </div>
+            ))}
           </div>
         </section>
       )}
@@ -3211,6 +3300,7 @@ const CSS = `
 .target-cap { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: #8B93A0; white-space: nowrap; }
 .target-input { padding: 8px 10px; font-size: 13px; }
 .target-badge { display: inline-block; margin-top: 5px; font-size: 10.5px; letter-spacing: 0.05em; color: #C08A3E; background: rgba(192,138,62,0.14); border-radius: 6px; padding: 2px 8px; }
+.ex-pr { font-size: 11px; color: #C08A3E; margin-top: 4px; font-weight: 600; }
 
 .hist-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
 .edit-actions { display: flex; gap: 8px; margin-top: 12px; }
