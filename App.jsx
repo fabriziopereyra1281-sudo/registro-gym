@@ -523,7 +523,10 @@ export default function App() {
     if (!error && data) {
       setMealLogs((prev) => [...prev, mapMealRow(data)]);
       showToast("Comida guardada");
+      return true;
     }
+    showToast("No se pudo guardar: " + (error?.message || "error desconocido"));
+    return false;
   }
 
   async function deleteMeal(id) {
@@ -2563,9 +2566,12 @@ function MealForm({ onSave }) {
     setItems((prev) => prev.filter((it) => it.id !== id));
   }
 
-  function submit() {
-    if (items.length === 0) return;
-    onSave({
+  const [saving, setSaving] = useState(false);
+
+  async function submit() {
+    if (items.length === 0 || saving) return;
+    setSaving(true);
+    const ok = await onSave({
       date: todayISO(),
       mealType,
       name: items.map((it) => it.label).join(", "),
@@ -2575,7 +2581,12 @@ function MealForm({ onSave }) {
       fat: Number(totals.fat.toFixed(1)),
       notes: notes.trim(),
     });
-    setItems([]); setMealType(null); setNotes("");
+    setSaving(false);
+    // Solo limpiamos el formulario si realmente se guardo — si fallo, dejamos
+    // todo cargado para que el usuario pueda reintentar sin perder lo que puso.
+    if (ok) {
+      setItems([]); setMealType(null); setNotes("");
+    }
   }
 
   return (
@@ -2652,7 +2663,9 @@ function MealForm({ onSave }) {
       )}
 
       <input className="input" style={{ marginTop: 10 }} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notas (opcional)" />
-      <button className="save-btn" disabled={items.length === 0} onClick={submit}>Guardar comida</button>
+      <button className="save-btn" disabled={items.length === 0 || saving} onClick={submit}>
+        {saving ? "Guardando..." : "Guardar comida"}
+      </button>
     </section>
   );
 }
