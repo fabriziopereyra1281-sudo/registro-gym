@@ -190,6 +190,10 @@ function mapSupplementRow(row) {
 function mapSupplementLogRow(row) {
   return { id: row.id, supplementId: row.supplement_id, date: row.date };
 }
+function mapCoachNoteRow(row) {
+  if (!row) return null;
+  return { id: row.id, weekStart: row.week_start, text: row.text, model: row.model, createdAt: row.created_at };
+}
 function mapPhotoRow(row) {
   return {
     id: row.id,
@@ -295,6 +299,7 @@ export default function App() {
   const [photoUrls, setPhotoUrls] = useState({});
   const [supplements, setSupplements] = useState([]);
   const [supplementLogs, setSupplementLogs] = useState([]);
+  const [coachNote, setCoachNote] = useState(null);
   const [dataLoaded, setDataLoaded] = useState(false);
   const [openForm, setOpenForm] = useState(null);
   const [editMode, setEditMode] = useState(false);
@@ -362,6 +367,10 @@ export default function App() {
       .from("supplements").select("*").eq("user_id", userId).order("created_at", { ascending: true });
     const { data: supplementLogRows } = await supabase
       .from("supplement_logs").select("*").eq("user_id", userId).order("date", { ascending: true });
+    // La escribe la funcion programada de Netlify (coach-weekly-background);
+    // acá solo se lee la última, nunca se inserta desde el navegador.
+    const { data: noteRow } = await supabase
+      .from("coach_notes").select("*").eq("user_id", userId).order("week_start", { ascending: false }).limit(1).maybeSingle();
 
     setConfig(cfg);
     setLogs((logRows || []).map(mapLogRow));
@@ -373,6 +382,7 @@ export default function App() {
     setPhotos((photoRows || []).map(mapPhotoRow));
     setSupplements((supplementRows || []).map(mapSupplementRow));
     setSupplementLogs((supplementLogRows || []).map(mapSupplementLogRow));
+    setCoachNote(mapCoachNoteRow(noteRow));
     setDataLoaded(true);
   }
 
@@ -781,6 +791,7 @@ export default function App() {
               targets={nutritionTargets}
               supplements={supplements}
               supplementLogs={supplementLogs}
+              coachNote={coachNote}
             />
           )}
         </main>
@@ -2899,7 +2910,7 @@ function StatusDot({ status }) {
   return <span className={"status-dot " + cls[status]}>{map[status]}</span>;
 }
 
-function CoachTab({ bwLogs, logs, activityLogs, checkins, mealLogs, targets, supplements, supplementLogs }) {
+function CoachTab({ bwLogs, logs, activityLogs, checkins, mealLogs, targets, supplements, supplementLogs, coachNote }) {
   const result = useMemo(
     () => computeCoach({ bwLogs, logs, activityLogs, checkins, mealLogs, targets, supplements, supplementLogs }),
     [bwLogs, logs, activityLogs, checkins, mealLogs, targets, supplements, supplementLogs]
@@ -2907,6 +2918,25 @@ function CoachTab({ bwLogs, logs, activityLogs, checkins, mealLogs, targets, sup
 
   return (
     <div className="tabpane">
+      <section className="card coach-ai-card">
+        <div className="coach-ai-head">
+          <Sparkles size={15} />
+          <span className="section-title" style={{ margin: 0 }}>Nota semanal del Coach</span>
+        </div>
+        {coachNote ? (
+          <>
+            <div className="decision-text">{coachNote.text}</div>
+            <div className="section-sub" style={{ marginTop: 10, marginBottom: 0 }}>
+              Generada automáticamente el {fmtDateLabel(coachNote.createdAt.slice(0, 10))} · se arma sola todos los domingos a la noche
+            </div>
+          </>
+        ) : (
+          <div className="section-sub" style={{ marginBottom: 0 }}>
+            Todavía no se generó ninguna. Se arma sola todos los domingos a la noche con los datos de la semana — no hay que hacer nada.
+          </div>
+        )}
+      </section>
+
       <section className={"card decision-card tone-" + result.tone}>
         <div className="section-title" style={{ marginBottom: 6 }}>Decisión de la semana</div>
         <div className="decision-text">{result.decision}</div>
@@ -2929,7 +2959,7 @@ function CoachTab({ bwLogs, logs, activityLogs, checkins, mealLogs, targets, sup
       </section>
 
       <div className="empty small">
-        Motor de reglas fijo (sin IA, sin costo, corre siempre). Si querés un análisis más fino antes de una decisión grande, pedímelo en el chat con estos mismos datos.
+        Panel de control: motor de reglas fijo (sin IA, sin costo, corre siempre). La nota de arriba es aparte — la escribe la IA una vez por semana con estos mismos datos.
       </div>
     </div>
   );
@@ -3076,6 +3106,8 @@ const CSS = `
 .chiprow.wrap { flex-wrap: wrap; }
 .chiprow.wrap .chip { flex: 0 0 auto; padding: 7px 12px; }
 
+.coach-ai-card { border: 1px solid rgba(192,138,62,0.3); background: linear-gradient(0deg, rgba(192,138,62,0.06), rgba(192,138,62,0.06)), #242A31; }
+.coach-ai-head { display: flex; align-items: center; gap: 7px; color: #C08A3E; margin-bottom: 6px; }
 .decision-card { border: 1px solid rgba(237,234,227,0.06); }
 .decision-card.tone-ok { border-color: rgba(110,155,139,0.4); background: linear-gradient(0deg, rgba(110,155,139,0.08), rgba(110,155,139,0.08)), #242A31; }
 .decision-card.tone-warn { border-color: rgba(192,103,58,0.4); background: linear-gradient(0deg, rgba(192,103,58,0.08), rgba(192,103,58,0.08)), #242A31; }
