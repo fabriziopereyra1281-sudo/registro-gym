@@ -2242,18 +2242,30 @@ function MealIdeaCard({ targets, totals }) {
               <div className="cardlist" style={{ marginTop: 10 }}>
                 {combos.map((combo) => {
                   const m = computeComboMacros(combo);
+                  const proteinFood = FOOD_DB.find((f) => f.id === combo.proteinId);
+                  const carbFood = FOOD_DB.find((f) => f.id === combo.carb);
+                  const vegFood = combo.veg ? FOOD_DB.find((f) => f.id === combo.veg) : null;
+                  // Cada plato dice su propia porcion con el nombre exacto del
+                  // alimento (no "proteína"/"carbohidrato" generico) para que
+                  // el numero se entienda sin tener que adivinar a que corresponde.
+                  const portionParts = [
+                    proteinFood ? `${fmtNum(MEAL_COMBO_PORTIONS.protein)}g de ${proteinFood.name}` : null,
+                    carbFood ? `${fmtNum(MEAL_COMBO_PORTIONS.carb)}g de ${carbFood.name}` : null,
+                    vegFood ? `${fmtNum(MEAL_COMBO_PORTIONS.veg)}g de ${vegFood.name}` : null,
+                  ].filter(Boolean);
                   return (
                     <div key={combo.proteinId} className="meal-idea">
                       <div className="hist-ex">{combo.title}</div>
                       <div className="hist-detail" style={{ marginTop: 2 }}>{combo.prep}</div>
-                      <div className="hist-detail mono" style={{ marginTop: 6 }}>
+                      <div className="hist-detail" style={{ marginTop: 6 }}>{portionParts.join(" · ")}</div>
+                      <div className="hist-detail mono" style={{ marginTop: 4 }}>
                         ≈{fmtNum(m.kcal)} kcal · P {fmtNum(Number(m.protein.toFixed(1)))}g · C {fmtNum(Number(m.carbs.toFixed(1)))}g · G {fmtNum(Number(m.fat.toFixed(1)))}g
                       </div>
                     </div>
                   );
                 })}
               </div>
-              <div className="section-sub" style={{ marginTop: 8 }}>Porción de referencia: 150g de proteína, 150g de carbohidrato cocido, 100g de verdura — ajustá a ojo.</div>
+              <div className="section-sub" style={{ marginTop: 8 }}>Porciones de referencia — ajustá a ojo según tu hambre y lo que te quede del día.</div>
               <button className="cancel-btn" style={{ width: "100%", marginTop: 8 }} onClick={() => setCycleSeed((s) => s + 1)}>
                 Otra idea
               </button>
