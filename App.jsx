@@ -2161,16 +2161,26 @@ function computeDayVerdict({ totals, targets, logs, config, suggestFoodId, dateI
   const remainingProtein = Math.round((proteinTarget - totals.protein) * 10) / 10;
   const overKcalBy = -remainingKcal;
 
+  // Marcar "te falta X" contra el objetivo del DIA ENTERO no tiene sentido a
+  // las 13hs -- obvio que todavia queda comida por cargar, no es una alerta.
+  // Recien despues de esta hora (cuando ya casi no queda margen para comer
+  // mas) esa misma falta es informacion accionable y vale la pena avisar +
+  // sugerir algo puntual. En un dia pasado (isToday=false) el dia ya termino
+  // entero, asi que ahi se evalua siempre, sin importar la hora.
+  const EVENING_CHECK_HOUR = 19;
+  const evaluateRemaining = !isToday || new Date().getHours() >= EVENING_CHECK_HOUR;
+
   const parts = [];
   let worstTone = "ok";
   let suggestion = null;
   let proteinGapFood = null;
 
   if (kcalTarget > 0 && overKcalBy > kcalTarget * 0.1) {
+    // Pasarte del objetivo es una alerta valida a cualquier hora del dia.
     parts.push(`te pasaste por ${fmtNum(overKcalBy)} kcal`);
     worstTone = "danger";
     suggestion = suggestFixForExcess(overKcalBy);
-  } else {
+  } else if (evaluateRemaining) {
     if (remainingKcal > Math.max(50, kcalTarget * 0.05)) {
       parts.push(`te quedan ${fmtNum(remainingKcal)} kcal`);
       if (worstTone === "ok") worstTone = "warn";
@@ -2196,6 +2206,17 @@ function computeDayVerdict({ totals, targets, logs, config, suggestFoodId, dateI
 
   if (parts.length === 0) {
     const trainingBit = isRestDay ? `${dayWord} es descanso` : (isToday ? "ya entrenaste" : "entrenaste ese día");
+    if (!evaluateRemaining && (remainingKcal > 0 || remainingProtein > 0)) {
+      // Todavia temprano y sin nada grave que avisar: info neutra (gris, sin
+      // alarmar) en vez de "vas perfecto", que seria exagerar - el dia no
+      // termino todavia.
+      return {
+        tone: "info",
+        text: `Vas en camino — tenés ${fmtNum(Math.max(0, remainingKcal))} kcal y ${fmtNum(Math.max(0, remainingProtein))}g de proteína disponibles para el resto de ${dayWord}, y ${trainingBit}.`,
+        suggestion: null,
+        proteinGapFood: null,
+      };
+    }
     return { tone: "ok", text: `Vas perfecto: cumpliste con la comida y ${trainingBit}.`, suggestion: null, proteinGapFood: null };
   }
 
