@@ -91,6 +91,13 @@ function fmtShort(iso) {
   const [, m, d] = iso.split("-");
   return `${d}/${m}`;
 }
+// Dia de la semana (0=domingo) de una fecha "YYYY-MM-DD", en hora local --
+// igual que fmtDateLabel, evita el corrimiento de dia que da parsear el ISO
+// directo con new Date() (lo interpreta en UTC).
+function weekdayOfISO(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d).getDay();
+}
 function uid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36) + Math.floor(Math.random() * 1000);
 }
@@ -1902,6 +1909,12 @@ function AddSupplementForm({ onSave }) {
 
 // ---------------------------------------------------------------------------
 function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwLogs, logs, config, activityLogs }) {
+  // Que dia se esta viendo/cargando: por defecto hoy, pero se puede mover a
+  // cualquier dia anterior (ej. para cargar una cena de madrugada que quedo
+  // sin registrar, o completar comidas de ayer). Nunca se permite ir a futuro.
+  const [selectedDate, setSelectedDate] = useState(todayISO());
+  const isToday = selectedDate === todayISO();
+
   const latestWeight = useMemo(() => {
     const sorted = [...bwLogs].filter((b) => b.weight != null).sort((a, b) => (a.date < b.date ? 1 : -1));
     return sorted[0]?.weight ?? null;
@@ -1911,12 +1924,12 @@ function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwL
     return sorted[0]?.waist ?? null;
   }, [bwLogs]);
 
-  const todaysMeals = useMemo(
-    () => mealLogs.filter((m) => m.date === todayISO()),
-    [mealLogs]
+  const selectedMeals = useMemo(
+    () => mealLogs.filter((m) => m.date === selectedDate),
+    [mealLogs, selectedDate]
   );
   const totals = useMemo(() => {
-    const raw = todaysMeals.reduce(
+    const raw = selectedMeals.reduce(
       (acc, m) => ({
         calories: acc.calories + (m.calories || 0),
         protein: acc.protein + (m.protein || 0),
@@ -1931,15 +1944,14 @@ function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwL
       carbs: Math.round(raw.carbs * 10) / 10,
       fat: Math.round(raw.fat * 10) / 10,
     };
-  }, [todaysMeals]);
+  }, [selectedMeals]);
 
-  const isRestDay = useMemo(() => !DAY_KEY_BY_WEEKDAY[new Date().getDay()], []);
+  const isRestDay = useMemo(() => !DAY_KEY_BY_WEEKDAY[weekdayOfISO(selectedDate)], [selectedDate]);
   const activityKcal = useMemo(() => {
-    const today = todayISO();
     return activityLogs
-      .filter((a) => a.date === today)
+      .filter((a) => a.date === selectedDate)
       .reduce((sum, a) => sum + computeActivityKcal(a, latestWeight), 0);
-  }, [activityLogs, latestWeight]);
+  }, [activityLogs, latestWeight, selectedDate]);
 
   const effectiveTargets = useMemo(
     () => computeEffectiveTargets(targets, { isRestDay, activityKcal }),
@@ -1948,8 +1960,8 @@ function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwL
 
   const [suggestFoodId, setSuggestFoodId] = useState(null);
   const dayVerdict = useMemo(
-    () => computeDayVerdict({ totals, targets: effectiveTargets, logs, config, suggestFoodId }),
-    [totals, effectiveTargets, logs, config, suggestFoodId]
+    () => computeDayVerdict({ totals, targets: effectiveTargets, logs, config, suggestFoodId, dateISO: selectedDate, isToday }),
+    [totals, effectiveTargets, logs, config, suggestFoodId, selectedDate, isToday]
   );
 
   return (
@@ -1966,7 +1978,19 @@ function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwL
       />
 
       <section className="card">
-        <div className="section-title">Hoy</div>
+        <div className="date-nav">
+          <input
+            className="input date-nav-input"
+            type="date"
+            value={selectedDate}
+            max={todayISO()}
+            onChange={(e) => e.target.value && setSelectedDate(e.target.value)}
+          />
+          {!isToday && (
+            <button className="cancel-btn" onClick={() => setSelectedDate(todayISO())}>Volver a hoy</button>
+          )}
+        </div>
+        <div className="section-title" style={{ marginTop: 12 }}>{isToday ? "Hoy" : fmtDateLabel(selectedDate)}</div>
         <div className="section-sub">
           Comidas registradas vs. objetivo diario
           {effectiveTargets?.adjustmentNotes?.length > 0 ? ` (ajustado: ${effectiveTargets.adjustmentNotes.join(", ")})` : ""}
@@ -1983,13 +2007,13 @@ function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwL
         )}
       </section>
 
-      <MealForm onSave={addMeal} />
+      <MealForm onSave={addMeal} date={selectedDate} isToday={isToday} />
 
-      {todaysMeals.length > 0 && (
+      {selectedMeals.length > 0 && (
         <section className="card">
-          <div className="section-title">Comidas de hoy</div>
+          <div className="section-title">{isToday ? "Comidas de hoy" : `Comidas del ${fmtDateLabel(selectedDate)}`}</div>
           <div className="cardlist" style={{ marginTop: 8 }}>
-            {todaysMeals.map((m) => (
+            {selectedMeals.map((m) => (
               <div key={m.id} className="hist-row">
                 <div>
                   <div className="hist-ex">{m.mealType ? `${m.mealType} · ` : ""}{m.name}</div>
@@ -2120,16 +2144,16 @@ function suggestFixForExcess(overKcalBy) {
 // cuanta comida (kcal/proteina) queda por cargar, y si ya se registro el
 // entrenamiento del dia (segun el split lunes-viernes; sabado/domingo es
 // descanso y no se evalua entrenamiento).
-function computeDayVerdict({ totals, targets, logs, config, suggestFoodId }) {
+function computeDayVerdict({ totals, targets, logs, config, suggestFoodId, dateISO, isToday }) {
+  const dayWord = isToday ? "hoy" : "ese día";
   if (!targets) {
-    return { tone: "info", text: "Definí tus objetivos diarios arriba para ver acá qué te falta hoy." };
+    return { tone: "info", text: `Definí tus objetivos diarios arriba para ver acá qué falta ${dayWord}.` };
   }
 
-  const today = todayISO();
-  const weekday = new Date().getDay();
+  const weekday = weekdayOfISO(dateISO);
   const dayKey = DAY_KEY_BY_WEEKDAY[weekday] || null;
   const isRestDay = !dayKey;
-  const trainedToday = logs.some((l) => l.date === today && (!dayKey || l.day === dayKey));
+  const trainedThatDay = logs.some((l) => l.date === dateISO && (!dayKey || l.day === dayKey));
 
   const kcalTarget = targets.calories || 0;
   const proteinTarget = targets.protein || 0;
@@ -2164,14 +2188,14 @@ function computeDayVerdict({ totals, targets, logs, config, suggestFoodId }) {
     }
   }
 
-  if (!isRestDay && !trainedToday) {
+  if (!isRestDay && !trainedThatDay) {
     const focus = config?.[dayKey]?.focus;
-    parts.push(`todavía no cargaste el entrenamiento de hoy${focus ? ` (${focus})` : ""}`);
+    parts.push(`todavía no cargaste el entrenamiento de ${dayWord}${focus ? ` (${focus})` : ""}`);
     worstTone = worstTone === "danger" ? "danger" : "warn";
   }
 
   if (parts.length === 0) {
-    const trainingBit = isRestDay ? "hoy es descanso" : "ya entrenaste";
+    const trainingBit = isRestDay ? `${dayWord} es descanso` : (isToday ? "ya entrenaste" : "entrenaste ese día");
     return { tone: "ok", text: `Vas perfecto: cumpliste con la comida y ${trainingBit}.`, suggestion: null, proteinGapFood: null };
   }
 
@@ -2517,7 +2541,7 @@ function GoalCard({ targets, onSave, latestWeight, latestWaist }) {
   );
 }
 
-function MealForm({ onSave }) {
+function MealForm({ onSave, date, isToday }) {
   const [mealType, setMealType] = useState(null);
   const [items, setItems] = useState([]);
   const [notes, setNotes] = useState("");
@@ -2583,7 +2607,7 @@ function MealForm({ onSave }) {
     if (items.length === 0 || saving) return;
     setSaving(true);
     const ok = await onSave({
-      date: todayISO(),
+      date,
       mealType,
       name: items.map((it) => it.label).join(", "),
       calories: Math.round(totals.kcal),
@@ -2602,7 +2626,7 @@ function MealForm({ onSave }) {
 
   return (
     <section className="card">
-      <div className="section-title">Nueva comida</div>
+      <div className="section-title">{isToday ? "Nueva comida" : `Nueva comida — ${fmtDateLabel(date)}`}</div>
       <div className="section-sub">Elegí el alimento y la cantidad — las calorías y macros se calculan solas</div>
 
       <div className="chiprow wrap" style={{ marginBottom: 10 }}>
@@ -3027,7 +3051,7 @@ const CSS = `
 .accent2 { color: #0092B0; }  /* rotulo de la serie Izquierdo */
 .side-label.muted { color: #8B93A0; }
 
-.input { background: #1B1F24; border: 1px solid rgba(237,234,227,0.14); border-radius: 10px; padding: 10px 12px; color: #EDEAE3; font-size: 14px; font-family: 'JetBrains Mono', monospace; width: 100%; }
+.input { background: #1B1F24; border: 1px solid rgba(237,234,227,0.14); border-radius: 10px; padding: 10px 12px; color: #EDEAE3; font-size: 14px; font-family: 'JetBrains Mono', monospace; width: 100%; color-scheme: dark; }
 .input::placeholder { color: #5C6470; font-family: 'Inter', sans-serif; }
 
 .save-btn { background: #C08A3E; color: #1B1F24; border: none; border-radius: 10px; padding: 11px; font-weight: 700; font-size: 13.5px; letter-spacing: 0.02em; margin-top: 10px; width: 100%; }
@@ -3081,6 +3105,9 @@ const CSS = `
 .edit-actions { display: flex; gap: 8px; margin-top: 12px; }
 .edit-actions .save-btn { margin-top: 0; }
 .cancel-btn { flex: 0 0 38%; background: rgba(237,234,227,0.06); border: 1px solid rgba(237,234,227,0.14); color: #EDEAE3; border-radius: 10px; padding: 11px; font-weight: 600; font-size: 13.5px; }
+.date-nav { display: flex; align-items: center; gap: 10px; }
+.date-nav-input { flex: 1; }
+.date-nav .cancel-btn { flex: 0 0 auto; padding: 11px 14px; white-space: nowrap; }
 
 .edit-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #8B93A0; margin-bottom: 6px; }
 .edit-row { display: flex; align-items: center; gap: 8px; }
