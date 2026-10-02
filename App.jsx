@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import {
   Dumbbell, TrendingUp, History, Plus, Trash2, ChevronDown, X, Check, Pencil, LogOut, Activity, Utensils, Sparkles,
-  Camera,
+  Camera, Bell,
 } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -97,6 +97,16 @@ function fmtShort(iso) {
 function weekdayOfISO(iso) {
   const [y, m, d] = iso.split("-").map(Number);
   return new Date(y, m - 1, d).getDay();
+}
+// Dias enteros transcurridos desde una fecha "YYYY-MM-DD" hasta hoy, en hora
+// local (mismo criterio que weekdayOfISO). Se usa para los recordatorios de
+// peso/cintura/fotos: cuantos dias pasaron desde el ultimo registro.
+function daysSinceISO(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const then = new Date(y, m - 1, d);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((today - then) / 86400000);
 }
 function uid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36) + Math.floor(Math.random() * 1000);
@@ -747,6 +757,10 @@ export default function App() {
               addExercise={addExercise}
               updateExercise={updateExercise}
               removeExercise={removeExercise}
+              bwLogs={bwLogs}
+              addBw={addBw}
+              photos={photos}
+              setTab={setTab}
             />
           ) : tab === "progreso" ? (
             <ProgresoTab
@@ -976,14 +990,111 @@ function NumInput({ value, onChange, placeholder, decimal = true, className = "i
   );
 }
 
+// Cada cuantos dias sin registrar se considera atrasado -- semanal, mismo
+// criterio que ya usa el Coach para comparar "esta semana vs. la anterior".
+// Ajustable si hace falta cambiar la frecuencia.
+const CHECKIN_REMINDER_DAYS = 7;
+
+// Recordatorio de peso/cintura/fotos: aparece arriba de "Hoy" cuando pasaron
+// CHECKIN_REMINDER_DAYS o mas desde el ultimo registro de cada cosa (o nunca
+// se cargo). Deja completar peso y cintura ahi mismo sin salir de la
+// pestaña; para las fotos manda a "Progreso", que es donde vive esa carga.
+// El cuello no tiene fecha propia (se carga una sola vez en Nutricion ->
+// Meta fisica, no es un registro periodico como peso/cintura), asi que solo
+// se deja la nota fija en vez de calcularle un "hace X dias".
+function CheckInReminder({ bwLogs, addBw, photos, setTab }) {
+  const [weightInput, setWeightInput] = useState("");
+  const [waistInput, setWaistInput] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const lastWeightDate = useMemo(() => {
+    const withWeight = [...bwLogs].filter((b) => b.weight != null).sort((a, b) => (a.date < b.date ? 1 : -1));
+    return withWeight[0]?.date ?? null;
+  }, [bwLogs]);
+  const lastWaistDate = useMemo(() => {
+    const withWaist = [...bwLogs].filter((b) => b.waist != null).sort((a, b) => (a.date < b.date ? 1 : -1));
+    return withWaist[0]?.date ?? null;
+  }, [bwLogs]);
+  const lastPhotoDate = useMemo(() => {
+    const sorted = [...(photos || [])].sort((a, b) => (a.date < b.date ? 1 : -1));
+    return sorted[0]?.date ?? null;
+  }, [photos]);
+
+  const daysWeight = lastWeightDate ? daysSinceISO(lastWeightDate) : null;
+  const daysWaist = lastWaistDate ? daysSinceISO(lastWaistDate) : null;
+  const daysPhoto = lastPhotoDate ? daysSinceISO(lastPhotoDate) : null;
+
+  const weightDue = daysWeight == null || daysWeight >= CHECKIN_REMINDER_DAYS;
+  const waistDue = daysWaist == null || daysWaist >= CHECKIN_REMINDER_DAYS;
+  const photoDue = daysPhoto == null || daysPhoto >= CHECKIN_REMINDER_DAYS;
+
+  if (!weightDue && !waistDue && !photoDue) return null;
+
+  function dueText(days, noun) {
+    if (days == null) return `nunca cargaste ${noun}`;
+    return `hace ${days} día${days === 1 ? "" : "s"} que no cargás ${noun}`;
+  }
+
+  const parts = [];
+  if (weightDue && waistDue && daysWeight === daysWaist) {
+    parts.push(dueText(daysWeight, "peso ni cintura"));
+  } else {
+    if (weightDue) parts.push(dueText(daysWeight, "peso"));
+    if (waistDue) parts.push(dueText(daysWaist, "cintura"));
+  }
+  if (photoDue) parts.push(dueText(daysPhoto, "una foto"));
+
+  async function submit() {
+    const w = toNum(weightInput);
+    if (w == null || saving) return;
+    setSaving(true);
+    await addBw({ date: todayISO(), weight: w, waist: toNum(waistInput) });
+    setSaving(false);
+    setWeightInput(""); setWaistInput("");
+  }
+
+  return (
+    <section className="card reminder-card">
+      <div className="reminder-head">
+        <Bell size={15} />
+        <span className="section-title" style={{ margin: 0 }}>Toca tu control</span>
+      </div>
+      <div className="section-sub" style={{ marginBottom: 10 }}>
+        {parts.join(" · ")}
+      </div>
+
+      {(weightDue || waistDue) && (
+        <>
+          <div className="side-grid two" style={{ marginBottom: 10 }}>
+            <NumInput placeholder="Peso (kg)" value={weightInput} onChange={setWeightInput} />
+            <NumInput placeholder="Cintura (cm)" value={waistInput} onChange={setWaistInput} />
+          </div>
+          <button className="save-btn" style={{ marginTop: 0, marginBottom: photoDue ? 8 : 0 }} disabled={!weightInput || saving} onClick={submit}>
+            {saving ? "Guardando…" : "Registrar"}
+          </button>
+        </>
+      )}
+      {photoDue && (
+        <button className="cancel-btn" style={{ width: "100%" }} onClick={() => setTab("progreso")}>
+          <Camera size={14} style={{ marginRight: 6, verticalAlign: -2 }} />Ir a subir una foto
+        </button>
+      )}
+      <div className="reminder-note">¿Cambió tu contorno de cuello? Actualizalo en Nutrición → Meta física.</div>
+    </section>
+  );
+}
+
 // ---------------------------------------------------------------------------
 function HoyTab({
   config, selectedDay, setSelectedDay, openForm, setOpenForm, lastEntryFor, addLog,
   editMode, setEditMode, updateFocus, updateNote, addExercise, updateExercise, removeExercise,
+  bwLogs, addBw, photos, setTab,
 }) {
   const day = config[selectedDay];
   return (
     <div className="tabpane">
+      <CheckInReminder bwLogs={bwLogs} addBw={addBw} photos={photos} setTab={setTab} />
+
       <div className="chiprow">
         {DAY_ORDER.map((k) => (
           <button key={k} className={"chip" + (k === selectedDay ? " chip-active" : "")} onClick={() => setSelectedDay(k)}>
@@ -3135,6 +3246,10 @@ const CSS = `
 
 .coach-ai-card { border: 1px solid rgba(192,138,62,0.3); background: linear-gradient(0deg, rgba(192,138,62,0.06), rgba(192,138,62,0.06)), #242A31; }
 .coach-ai-head { display: flex; align-items: center; gap: 7px; color: #C08A3E; margin-bottom: 6px; }
+
+.reminder-card { border: 1px solid rgba(192,138,62,0.3); background: linear-gradient(0deg, rgba(192,138,62,0.06), rgba(192,138,62,0.06)), #242A31; margin-bottom: 14px; }
+.reminder-head { display: flex; align-items: center; gap: 7px; color: #C08A3E; margin-bottom: 6px; }
+.reminder-note { font-size: 11.5px; color: #8B93A0; margin-top: 10px; }
 .decision-card { border: 1px solid rgba(237,234,227,0.06); }
 .decision-card.tone-ok { border-color: rgba(110,155,139,0.4); background: linear-gradient(0deg, rgba(110,155,139,0.08), rgba(110,155,139,0.08)), #242A31; }
 .decision-card.tone-warn { border-color: rgba(192,103,58,0.4); background: linear-gradient(0deg, rgba(192,103,58,0.08), rgba(192,103,58,0.08)), #242A31; }
