@@ -247,6 +247,7 @@ const FOOD_DB = [
   { id: "carne_magra", name: "Carne magra (nalga/lomo)", cat: "Proteínas", unit: false, kcal: 190, protein: 29, carbs: 0, fat: 8 },
   { id: "carne_picada", name: "Carne picada magra", cat: "Proteínas", unit: false, kcal: 210, protein: 26, carbs: 0, fat: 11 },
   { id: "asado", name: "Asado / carne vacuna a la parrilla", cat: "Proteínas", unit: false, kcal: 250, protein: 26, carbs: 0, fat: 16 },
+  { id: "cerdo", name: "Bife de cerdo", cat: "Proteínas", unit: false, kcal: 210, protein: 26, carbs: 0, fat: 11 },
   { id: "huevo", name: "Huevo entero", cat: "Proteínas", unit: true, unitWord: "unidad", unitWordPlural: "unidades", kcal: 70, protein: 6, carbs: 0.5, fat: 5 },
   { id: "clara_huevo", name: "Clara de huevo", cat: "Proteínas", unit: true, unitWord: "unidad", unitWordPlural: "unidades", kcal: 17, protein: 3.6, carbs: 0.2, fat: 0.1 },
   { id: "atun", name: "Atún al natural", cat: "Proteínas", unit: false, kcal: 116, protein: 26, carbs: 0, fat: 1 },
@@ -287,6 +288,82 @@ function computeFoodMacros(foodId, qty) {
     carbs: Number((food.carbs * factor).toFixed(1)),
     fat: Number((food.fat * factor).toFixed(1)),
   };
+}
+
+// Banco curado de combinaciones comida casera argentina, sin IA: para cada
+// proteina (de las que tiene sentido elegir "tengo esto en la heladera"),
+// una lista de platos concretos con su carbohidrato y verdura. No inventa
+// recetas nuevas ni interpreta texto libre -- es una lista fija que se
+// filtra por lo que el usuario tilda. Portion por defecto para estimar
+// macros: 150g de proteina, 150g de carbohidrato cocido, 100g de verdura.
+const MEAL_COMBO_PORTIONS = { protein: 150, carb: 150, veg: 100 };
+const MEAL_COMBOS = {
+  pollo: [
+    { carb: "arroz", veg: "verduras_mixtas", title: "Pollo revuelto con arroz y verduras salteadas", prep: "Pollo en tiras salteado con un chorrito de aceite, verduras salteadas aparte, arroz blanco de base." },
+    { carb: "papa", veg: "brocoli", title: "Pollo al horno con papas y brócoli", prep: "Pechuga al horno con especias, papas en gajos, brócoli al vapor." },
+    { carb: "fideos", veg: "zapallo_verde", title: "Pollo con fideos y zapallito salteado", prep: "Pollo salteado, fideos simples, zapallito salteado con ajo." },
+  ],
+  cerdo: [
+    { carb: "papa", veg: "verduras_mixtas", title: "Bife de cerdo a la plancha con puré y ensalada", prep: "Cerdo a la plancha, papa pisada, ensalada mixta al costado." },
+    { carb: "arroz", veg: "zanahoria", title: "Cerdo salteado con arroz y zanahoria", prep: "Cerdo en tiras salteado, arroz blanco, zanahoria cocida." },
+    { carb: "batata", veg: "brocoli", title: "Cerdo al horno con batata y brócoli", prep: "Cerdo al horno, batata en rodajas, brócoli al vapor." },
+  ],
+  carne_magra: [
+    { carb: "papa", veg: "verduras_mixtas", title: "Lomo a la plancha con papas y ensalada", prep: "Lomo a la plancha, papas hervidas o al horno, ensalada mixta." },
+    { carb: "arroz", veg: "zapallo_anco", title: "Lomo salteado con arroz y zapallo", prep: "Lomo en tiras salteado, arroz blanco, zapallo cocido." },
+    { carb: "fideos", veg: "espinaca", title: "Lomo con fideos y espinaca salteada", prep: "Lomo a la plancha cortado en tiras, fideos simples, espinaca salteada con ajo." },
+  ],
+  asado: [
+    { carb: "papa", veg: "verduras_mixtas", title: "Asado con papas al horno y ensalada", prep: "Asado a la parrilla, papas al horno, ensalada mixta." },
+    { carb: "batata", veg: "zapallo_anco", title: "Asado con batata y zapallo al horno", prep: "Asado a la parrilla, batata y zapallo al horno." },
+  ],
+  carne_picada: [
+    { carb: "fideos", veg: "verduras_mixtas", title: "Salsa boloñesa casera con fideos", prep: "Carne picada salteada con salsa de tomate casera, sobre fideos, ensalada al costado." },
+    { carb: "papa", veg: "zapallo_verde", title: "Carne picada con puré y zapallito", prep: "Carne picada salteada con cebolla, puré de papa, zapallito salteado." },
+  ],
+  pescado: [
+    { carb: "arroz", veg: "brocoli", title: "Merluza al horno con arroz y brócoli", prep: "Pescado al horno con limón, arroz blanco, brócoli al vapor." },
+    { carb: "papa", veg: "zanahoria", title: "Pescado a la plancha con papas y zanahoria", prep: "Pescado a la plancha, papas hervidas, zanahoria cocida." },
+  ],
+  atun: [
+    { carb: "arroz", veg: "verduras_mixtas", title: "Atún con arroz y ensalada", prep: "Atún al natural escurrido, mezclado con arroz y verduras mixtas, un chorrito de aceite de oliva." },
+    { carb: "fideos", veg: "zapallo_verde", title: "Ensalada de atún con fideos fríos", prep: "Fideos fríos con atún al natural, zapallito salteado, condimentado a gusto." },
+  ],
+  huevo: [
+    { carb: "pan_integral", veg: "verduras_mixtas", title: "Huevos revueltos con pan integral y ensalada", prep: "Huevos revueltos, pan integral tostado, ensalada mixta al costado." },
+    { carb: "papa", veg: "espinaca", title: "Tortilla de papa y espinaca", prep: "Tortilla de huevo con papa y espinaca salteada adentro." },
+  ],
+};
+
+// Elige una combinacion para la proteina dada. seed cambia el resultado de
+// forma predecible (ej. por fecha) para no mostrar siempre la primera —
+// no es random puro, asi que no "titila" en cada render.
+function pickMealCombo(proteinId, seed) {
+  const options = MEAL_COMBOS[proteinId];
+  if (!options || options.length === 0) return null;
+  const idx = Math.abs(seed) % options.length;
+  return { proteinId, ...options[idx] };
+}
+
+// Macros totales estimados de la combinacion con las porciones por defecto.
+function computeComboMacros(combo) {
+  const parts = [
+    computeFoodMacros(combo.proteinId, MEAL_COMBO_PORTIONS.protein),
+    computeFoodMacros(combo.carb, MEAL_COMBO_PORTIONS.carb),
+    combo.veg ? computeFoodMacros(combo.veg, MEAL_COMBO_PORTIONS.veg) : null,
+  ].filter(Boolean);
+  return parts.reduce(
+    (acc, m) => ({ kcal: acc.kcal + m.kcal, protein: acc.protein + m.protein, carbs: acc.carbs + m.carbs, fat: acc.fat + m.fat }),
+    { kcal: 0, protein: 0, carbs: 0, fat: 0 }
+  );
+}
+
+// Un entero estable por fecha + texto, para variar la sugerencia dia a dia
+// sin que sea random puro (mismo dia, misma seleccion -> misma sugerencia).
+function seedFromString(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return h;
 }
 
 const PAIN_ZONES = [
@@ -2108,6 +2185,91 @@ function AddSupplementForm({ onSave }) {
 }
 
 // ---------------------------------------------------------------------------
+// Proteinas seleccionables: las que tienen al menos una combinacion en el
+// banco (no tiene sentido ofrecer "whey" o "queso cottage" como "que tengo
+// en la heladera para cocinar hoy").
+const MEAL_IDEA_PROTEINS = Object.keys(MEAL_COMBOS)
+  .map((id) => FOOD_DB.find((f) => f.id === id))
+  .filter(Boolean);
+
+// "Que cocino hoy": tildas lo que tenes y te sugiere un plato concreto del
+// banco curado (ver MEAL_COMBOS), sin IA. La sugerencia rota por fecha asi
+// no es siempre la misma, y "Otra idea" fuerza otra opcion para la misma
+// seleccion. No registra nada en Nutricion -- es solo una idea, cargarla
+// despues en "Nueva comida" es una accion aparte y deliberada.
+function MealIdeaCard({ targets, totals }) {
+  const [open, setOpen] = useState(false);
+  const [selected, setSelected] = useState([]);
+  const [cycleSeed, setCycleSeed] = useState(0);
+
+  function toggleProtein(id) {
+    setSelected((prev) => (prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id]));
+    setCycleSeed(0); // nueva seleccion, arrancar de la primera idea de nuevo
+  }
+
+  const combos = useMemo(() => {
+    const today = todayISO();
+    return selected.map((proteinId) => pickMealCombo(proteinId, seedFromString(today + proteinId) + cycleSeed)).filter(Boolean);
+  }, [selected, cycleSeed]);
+
+  const remainingKcal = targets?.calories != null ? Math.round(targets.calories - totals.calories) : null;
+  const remainingProtein = targets?.protein != null ? Math.round((targets.protein - totals.protein) * 10) / 10 : null;
+
+  return (
+    <section className="card">
+      <button className="card-head" onClick={() => setOpen(!open)}>
+        <div>
+          <div className="section-title" style={{ marginBottom: 2 }}>¿Qué cocino hoy?</div>
+          <div className="section-sub" style={{ marginBottom: 0 }}>Tildá lo que tenés a mano y te tiro una idea concreta</div>
+        </div>
+        <div className={"card-icon" + (open ? " open" : "")}>{open ? <X size={16} /> : <Plus size={16} />}</div>
+      </button>
+
+      {open && (
+        <div className="card-form">
+          <div className="chiprow wrap">
+            {MEAL_IDEA_PROTEINS.map((f) => (
+              <button key={f.id} className={"chip" + (selected.includes(f.id) ? " chip-active" : "")} onClick={() => toggleProtein(f.id)}>
+                {f.name}
+              </button>
+            ))}
+          </div>
+
+          {selected.length === 0 ? (
+            <div className="empty small">Tildá al menos una proteína que tengas hoy.</div>
+          ) : (
+            <>
+              <div className="cardlist" style={{ marginTop: 10 }}>
+                {combos.map((combo) => {
+                  const m = computeComboMacros(combo);
+                  return (
+                    <div key={combo.proteinId} className="meal-idea">
+                      <div className="hist-ex">{combo.title}</div>
+                      <div className="hist-detail" style={{ marginTop: 2 }}>{combo.prep}</div>
+                      <div className="hist-detail mono" style={{ marginTop: 6 }}>
+                        ≈{fmtNum(m.kcal)} kcal · P {fmtNum(Number(m.protein.toFixed(1)))}g · C {fmtNum(Number(m.carbs.toFixed(1)))}g · G {fmtNum(Number(m.fat.toFixed(1)))}g
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="section-sub" style={{ marginTop: 8 }}>Porción de referencia: 150g de proteína, 150g de carbohidrato cocido, 100g de verdura — ajustá a ojo.</div>
+              <button className="cancel-btn" style={{ width: "100%", marginTop: 8 }} onClick={() => setCycleSeed((s) => s + 1)}>
+                Otra idea
+              </button>
+              {remainingKcal != null && (
+                <div className="section-sub" style={{ marginTop: 10, marginBottom: 0 }}>
+                  Hoy te quedan {fmtNum(Math.max(0, remainingKcal))} kcal{remainingProtein != null ? ` y ${fmtNum(Math.max(0, remainingProtein))}g de proteína` : ""} para cubrir.
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwLogs, logs, config, activityLogs }) {
   // Que dia se esta viendo/cargando: por defecto hoy, pero se puede mover a
   // cualquier dia anterior (ej. para cargar una cena de madrugada que quedo
@@ -2169,6 +2331,8 @@ function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwL
       <TargetsCard targets={targets} onSave={saveTargets} latestWeight={latestWeight} />
 
       <DayVerdictCard verdict={dayVerdict} onPickFood={setSuggestFoodId} />
+
+      <MealIdeaCard targets={effectiveTargets} totals={totals} />
 
       <GoalCard
         targets={targets}
@@ -3391,6 +3555,7 @@ const CSS = `
 .breakdown-row > span:first-child { color: #8B93A0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; font-weight: 600; }
 .breakdown-row > span:last-child { color: #EDEAE3; }
 .breakdown-note { font-size: 11.5px; color: #5C6470; line-height: 1.5; padding-top: 4px; border-top: 1px solid rgba(237,234,227,0.08); }
+.meal-idea { padding: 12px; background: #1B1F24; border-radius: 10px; }
 
 .verdict-card { padding: 14px 16px; border-left: 3px solid; }
 .verdict-text { font-size: 14px; font-weight: 600; line-height: 1.4; }
