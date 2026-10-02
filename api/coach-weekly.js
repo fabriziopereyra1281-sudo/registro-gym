@@ -1,22 +1,24 @@
 // Coach semanal automático. No lo dispara nadie abriendo la app: la llama un
-// cron externo gratuito (ver instrucciones en el PR / README) una vez por
-// semana, vía HTTP GET con una clave secreta. Por cada usuario: junta los
-// últimos 14 días desde Supabase, arma el mismo resumen que ya calcula
-// computeCoach() en App.jsx, le pide a Claude una lectura con criterio en vez
-// de solo "subió/bajó", y la guarda en coach_notes para que la app la
-// muestre. Si TELEGRAM_BOT_TOKEN y TELEGRAM_CHAT_ID están configurados,
-// también la manda por Telegram — si no están, no hace nada ahí (opcional).
+// cron externo gratuito (ver instrucciones en el PR) una vez por semana, vía
+// HTTP GET con una clave secreta. Por cada usuario: junta los últimos 14 días
+// desde Supabase, arma el mismo resumen que ya calcula computeCoach() en
+// App.jsx, le pide a Claude una lectura con criterio en vez de solo "subió/
+// bajó", y la guarda en coach_notes para que la app la muestre. Si
+// TELEGRAM_BOT_TOKEN y TELEGRAM_CHAT_ID están configurados, también la manda
+// por Telegram — si no están, no hace nada ahí (opcional).
 //
-// Es una función HTTP común (no usa ningún mecanismo de scheduling propio de
-// Netlify) justamente para no depender de una sintaxis que no se pudo
-// verificar en el momento de escribir esto. El cron vive afuera, apuntando
-// a esta URL; la funcion en si es la parte estable y bien conocida.
+// Vercel detecta sola cualquier archivo bajo /api como funcion serverless,
+// accesible en /api/coach-weekly — no hace falta declararla en ningun lado.
+// Es una funcion HTTP comun (no usa el sistema de Cron Jobs propio de Vercel)
+// por la misma razon que en la version anterior para Netlify: no se pudo
+// verificar su sintaxis exacta sin acceso a la documentacion en vivo desde
+// este entorno. El cron vive afuera, apuntando a esta URL.
 //
 // Por que pide clave: sin ella, cualquiera que encuentre la URL podria
 // disparar llamadas a la IA a tu costa. Sin COACH_CRON_SECRET configurada,
 // la funcion se niega a correr (ver chequeo mas abajo).
 //
-// Variables de entorno que necesita (Netlify → Site settings → Environment):
+// Variables de entorno que necesita (Vercel → Project Settings → Environment Variables):
 //   SUPABASE_SERVICE_ROLE_KEY  (obligatoria — NUNCA la anon key; esta sí
 //     puede leer y escribir cualquier usuario, por eso nunca va en el
 //     navegador, solo acá)
@@ -205,13 +207,19 @@ async function notifyTelegram(text) {
   if (!res.ok) console.error("Telegram respondió", res.status, await res.text());
 }
 
-export const handler = async (event) => {
+// Firma clasica de las Serverless Functions (runtime Node) de Vercel para un
+// proyecto no-Next.js: export default, (req, res) al estilo Node, con
+// req.query para el query string y res.status(...).json/send(...) para
+// responder. A diferencia de Netlify no hace falta envolver nada ni declarar
+// la ruta en ningun archivo de configuracion.
+export default async function handler(req, res) {
   const cronSecret = process.env.COACH_CRON_SECRET;
-  const providedKey = event?.queryStringParameters?.key;
+  const providedKey = req.query?.key;
   if (!cronSecret || providedKey !== cronSecret) {
     // 401 generico: no distinguir "falta configurar" de "clave incorrecta"
     // para no darle pistas a quien intente adivinar la clave desde afuera.
-    return { statusCode: 401, body: "No autorizado." };
+    res.status(401).send("No autorizado.");
+    return;
   }
 
   const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
@@ -223,7 +231,8 @@ export const handler = async (event) => {
     console.error(
       "Coach semanal: faltan variables de entorno (SUPABASE_URL/VITE_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, ANTHROPIC_API_KEY)."
     );
-    return { statusCode: 500, body: "Faltan variables de entorno." };
+    res.status(500).send("Faltan variables de entorno.");
+    return;
   }
 
   const supabase = createClient(supabaseUrl, serviceKey);
@@ -232,7 +241,8 @@ export const handler = async (event) => {
   const { data: usersPage, error: usersError } = await supabase.auth.admin.listUsers();
   if (usersError) {
     console.error("Coach semanal: no se pudo listar usuarios:", usersError.message);
-    return { statusCode: 500, body: usersError.message };
+    res.status(500).send(usersError.message);
+    return;
   }
 
   const results = [];
@@ -248,5 +258,5 @@ export const handler = async (event) => {
   }
 
   console.log("Coach semanal:", JSON.stringify(results));
-  return { statusCode: 200, body: JSON.stringify({ ok: true, processed: results.length }) };
-};
+  res.status(200).json({ ok: true, processed: results.length });
+}
