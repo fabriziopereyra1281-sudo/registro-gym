@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
   Dumbbell, TrendingUp, History, Plus, Trash2, ChevronDown, X, Check, Pencil, LogOut, Activity, Utensils, Sparkles,
-  Camera, Bell,
+  Camera, Bell, Pause, Play, Timer,
 } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -1288,14 +1288,115 @@ function CheckInReminder({ bwLogs, addBw, photos, setTab }) {
 }
 
 // ---------------------------------------------------------------------------
+// Barra fija de descanso: cuenta regresiva + beep al llegar a 0. El AudioContext
+// se recibe ya creado desde HoyTab (ver startRestTimer), porque crearlo aca
+// adentro -- despues de que paso un tick de setInterval -- llegaria tarde para
+// las politicas de autoplay del navegador.
+function RestTimerBar({ seconds, setSeconds, audioCtx, onClose }) {
+  const [paused, setPaused] = useState(false);
+  const beepedRef = useRef(false);
+
+  useEffect(() => {
+    if (seconds == null) return;
+    if (seconds > 0) {
+      beepedRef.current = false;
+      if (paused) return;
+      const id = setTimeout(() => setSeconds((s) => (s != null ? s - 1 : s)), 1000);
+      return () => clearTimeout(id);
+    }
+    if (!beepedRef.current) {
+      beepedRef.current = true;
+      playBeep(audioCtx);
+      try { navigator.vibrate?.([200, 100, 200]); } catch {}
+    }
+  }, [paused, seconds, audioCtx, setSeconds]);
+
+  function playBeep(ctx) {
+    if (!ctx) return;
+    try {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.25, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.6);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.6);
+    } catch {}
+  }
+
+  function adjust(delta) {
+    beepedRef.current = false;
+    setSeconds((s) => Math.max(0, (s || 0) + delta));
+  }
+
+  const done = seconds <= 0;
+  const mm = String(Math.floor(Math.max(seconds, 0) / 60)).padStart(2, "0");
+  const ss = String(Math.max(seconds, 0) % 60).padStart(2, "0");
+
+  return (
+    <div className={"rest-timer-bar" + (done ? " done" : "")}>
+      <Timer size={18} />
+      <div className="rest-timer-time mono">{mm}:{ss}</div>
+      <div className="rest-timer-actions">
+        <button type="button" className="rest-timer-btn" onClick={() => adjust(-15)}>-15s</button>
+        <button type="button" className="rest-timer-btn" onClick={() => adjust(15)}>+15s</button>
+        <button type="button" className="rest-timer-btn" onClick={() => setPaused((p) => !p)}>
+          {paused ? <Play size={14} /> : <Pause size={14} />}
+        </button>
+        <button type="button" className="rest-timer-btn" onClick={onClose}><X size={14} /></button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 function HoyTab({
   config, selectedDay, setSelectedDay, openForm, setOpenForm, lastEntryFor, bestEntryFor, addLog,
   editMode, setEditMode, updateFocus, updateNote, addExercise, updateExercise, removeExercise,
   bwLogs, addBw, photos, setTab,
 }) {
   const day = config[selectedDay];
+
+  // Timer de descanso: vive en Hoy (no en cada tarjeta) para que quede fijo
+  // arriba sin importar que ejercicio tengas abierto. El AudioContext se crea
+  // en startRestTimer(), que se llama synchronicamente desde el click de
+  // "Guardar set" -- hace falta que sea asi (no despues de un await) para
+  // que el beep final pueda sonar: los navegadores bloquean el audio que
+  // arranca sin un gesto del usuario de por medio.
+  const [restDuration, setRestDurationState] = useState(() => {
+    try { return Number(localStorage.getItem("restDuration")) || 90; } catch { return 90; }
+  });
+  const [restSeconds, setRestSeconds] = useState(null); // null = sin timer activo
+  const audioCtxRef = useRef(null);
+
+  function setRestDuration(sec) {
+    setRestDurationState(sec);
+    try { localStorage.setItem("restDuration", String(sec)); } catch {}
+  }
+
+  function startRestTimer() {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!audioCtxRef.current && Ctx) audioCtxRef.current = new Ctx();
+      else if (audioCtxRef.current?.state === "suspended") audioCtxRef.current.resume();
+    } catch {}
+    setRestSeconds(restDuration);
+  }
+
   return (
     <div className="tabpane">
+      {restSeconds != null && (
+        <RestTimerBar
+          seconds={restSeconds}
+          setSeconds={setRestSeconds}
+          audioCtx={audioCtxRef.current}
+          onClose={() => setRestSeconds(null)}
+        />
+      )}
+
       <CheckInReminder bwLogs={bwLogs} addBw={addBw} photos={photos} setTab={setTab} />
 
       <div className="chiprow">
@@ -1357,6 +1458,9 @@ function HoyTab({
                 isOpen={openForm === ex.id}
                 onToggle={() => setOpenForm(openForm === ex.id ? null : ex.id)}
                 onSave={(entry) => { addLog(entry); setOpenForm(null); }}
+                restDuration={restDuration}
+                setRestDuration={setRestDuration}
+                onRestStart={startRestTimer}
               />
             ))
           )}
@@ -1366,7 +1470,7 @@ function HoyTab({
   );
 }
 
-function ExerciseCard({ exercise, day, last, best, isOpen, onToggle, onSave }) {
+function ExerciseCard({ exercise, day, last, best, isOpen, onToggle, onSave, restDuration, setRestDuration, onRestStart }) {
   const [weight, setWeight] = useState("");
   const [reps, setReps] = useState("");
   const [weightR, setWeightR] = useState("");
@@ -1400,6 +1504,11 @@ function ExerciseCard({ exercise, day, last, best, isOpen, onToggle, onSave }) {
   }
 
   function submit() {
+    // onRestStart() tiene que llamarse de forma sincronica, en la misma
+    // cadena del click de "Guardar set" (ver startRestTimer en HoyTab):
+    // es lo que permite que el beep final del timer pueda sonar pese a las
+    // restricciones de autoplay de audio del navegador.
+    onRestStart?.();
     const rirNum = toNum(rir);
     if (exercise.unilateral) {
       const wR = toNum(weightR), wL = toNum(weightL);
@@ -1465,6 +1574,20 @@ function ExerciseCard({ exercise, day, last, best, isOpen, onToggle, onSave }) {
             </div>
           )}
           <NumInput placeholder="RIR (opcional, 0-10)" decimal={false} value={rir} onChange={setRir} />
+          {setRestDuration && (
+            <div className="chiprow rest-chiprow">
+              {[60, 90, 120].map((sec) => (
+                <button
+                  key={sec}
+                  type="button"
+                  className={"chip" + (restDuration === sec ? " chip-active" : "")}
+                  onClick={() => setRestDuration(sec)}
+                >
+                  {sec}s
+                </button>
+              ))}
+            </div>
+          )}
           <button className="save-btn" onClick={submit}>Guardar set</button>
         </div>
       )}
@@ -3621,7 +3744,7 @@ const CSS = `
 .day-focus { font-size: 14px; color: #C08A3E; margin-top: 6px; font-weight: 600; }
 .day-note { font-size: 12px; color: #6E9B8B; margin-top: 4px; }
 
-.main { flex: 1; padding: 16px 16px 90px; overflow-y: auto; }
+.main { flex: 1; padding: 16px 16px 90px; }
 .tabpane { display: flex; flex-direction: column; gap: 14px; }
 
 .chiprow { display: flex; gap: 8px; }
@@ -3733,6 +3856,14 @@ const CSS = `
 
 .coach-ai-card { border: 1px solid rgba(192,138,62,0.3); background: linear-gradient(0deg, rgba(192,138,62,0.06), rgba(192,138,62,0.06)), #242A31; }
 .coach-ai-head { display: flex; align-items: center; gap: 7px; color: #C08A3E; margin-bottom: 6px; }
+
+.rest-timer-bar { position: sticky; top: -16px; z-index: 5; display: flex; align-items: center; gap: 10px; padding: 10px 14px; margin: -16px -16px 14px; border-bottom: 1px solid rgba(192,138,62,0.3); background: linear-gradient(0deg, rgba(192,138,62,0.1), rgba(192,138,62,0.1)), #1B1F24; color: #C08A3E; }
+.rest-timer-bar.done { animation: rest-timer-pulse 1s ease-in-out infinite; }
+.rest-timer-time { font-size: 18px; font-weight: 700; min-width: 54px; }
+.rest-timer-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.rest-timer-btn { display: flex; align-items: center; justify-content: center; gap: 4px; background: rgba(192,138,62,0.14); border: 1px solid rgba(192,138,62,0.35); color: #C08A3E; border-radius: 8px; padding: 6px 9px; font-size: 12px; font-weight: 600; cursor: pointer; }
+@keyframes rest-timer-pulse { 0%, 100% { background-color: rgba(192,138,62,0.1); } 50% { background-color: rgba(192,138,62,0.28); } }
+.rest-chiprow { margin-top: -4px; }
 
 .reminder-card { border: 1px solid rgba(192,138,62,0.3); background: linear-gradient(0deg, rgba(192,138,62,0.06), rgba(192,138,62,0.06)), #242A31; margin-bottom: 14px; }
 .reminder-head { display: flex; align-items: center; gap: 7px; color: #C08A3E; margin-bottom: 6px; }
