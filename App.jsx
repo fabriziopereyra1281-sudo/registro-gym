@@ -137,6 +137,11 @@ function toInput(n) {
   if (n === null || n === undefined) return "";
   return String(n).replace(".", ",");
 }
+// Para que el buscador del Historial encuentre "biceps" aunque el nombre
+// cargado sea "Bíceps" (sin tildes, sin importar mayusculas).
+function normalizeText(s) {
+  return String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+}
 // 1RM estimado (formula de Epley): cuanto podrias levantar a 1 repeticion,
 // a partir del peso y las reps de un set cualquiera. Mas comparable que el
 // peso crudo cuando las reps varian de un set a otro (80kgx5 vs 85kgx3 no se
@@ -2102,21 +2107,67 @@ function PhotoUploadForm({ onSave }) {
 // ---------------------------------------------------------------------------
 function HistorialTab({ logs, deleteLog, updateLog }) {
   const [editingId, setEditingId] = useState(null);
+  const [query, setQuery] = useState("");
+  const [dayFilter, setDayFilter] = useState("todos");
+
+  const filteredLogs = useMemo(() => {
+    const q = normalizeText(query.trim());
+    return logs.filter((l) => {
+      if (dayFilter !== "todos" && l.day !== dayFilter) return false;
+      if (q && !normalizeText(l.exerciseName).includes(q)) return false;
+      return true;
+    });
+  }, [logs, query, dayFilter]);
+
   const grouped = useMemo(() => {
     const byDate = {};
-    [...logs].sort((a, b) => (a.date < b.date ? 1 : -1)).forEach((l) => {
+    [...filteredLogs].sort((a, b) => (a.date < b.date ? 1 : -1)).forEach((l) => {
       if (!byDate[l.date]) byDate[l.date] = [];
       byDate[l.date].push(l);
     });
     return Object.entries(byDate);
-  }, [logs]);
+  }, [filteredLogs]);
 
-  if (grouped.length === 0) {
+  const hasFilters = query.trim() !== "" || dayFilter !== "todos";
+
+  if (logs.length === 0) {
     return <div className="tabpane"><div className="empty">Todavía no hay sets registrados. Andá a la pestaña "Hoy" y cargá el primero.</div></div>;
   }
 
   return (
     <div className="tabpane">
+      <div className="hist-filters">
+        <input
+          type="text"
+          className="input"
+          placeholder="Buscar ejercicio…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        <div className="chiprow wrap">
+          <button className={"chip" + (dayFilter === "todos" ? " chip-active" : "")} onClick={() => setDayFilter("todos")}>
+            Todos
+          </button>
+          {DAY_ORDER.map((k) => (
+            <button key={k} className={"chip" + (dayFilter === k ? " chip-active" : "")} onClick={() => setDayFilter(k)}>
+              {DAY_LABELS[k].slice(0, 3)}
+            </button>
+          ))}
+        </div>
+        {hasFilters && (
+          <button className="hist-clear-filters" onClick={() => { setQuery(""); setDayFilter("todos"); }}>
+            <X size={12} /> Limpiar filtros
+          </button>
+        )}
+      </div>
+
+      {grouped.length === 0 && (
+        <div className="empty">
+          Ningún set {query.trim() ? `con "${query.trim()}"` : ""}
+          {dayFilter !== "todos" ? `${query.trim() ? " en" : "en"} ${DAY_LABELS[dayFilter]}` : ""}.
+        </div>
+      )}
+
       {grouped.map(([date, entries]) => (
         <div key={date} className="hist-group">
           <div className="hist-date">{fmtDateLabel(date)}</div>
@@ -3862,6 +3913,8 @@ const CSS = `
 .bar-value { width: 52px; text-align: right; font-size: 11.5px; color: #EDEAE3; }
 .gap-label { font-size: 11.5px; color: #8B93A0; margin-top: 2px; }
 
+.hist-filters { display: flex; flex-direction: column; gap: 10px; margin-bottom: 4px; }
+.hist-clear-filters { display: flex; align-items: center; gap: 4px; align-self: flex-start; background: none; border: none; color: #8B93A0; font-size: 12px; font-weight: 600; padding: 0; }
 .hist-group { margin-bottom: 4px; }
 .hist-date { font-family: 'JetBrains Mono', monospace; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: #8B93A0; margin-bottom: 8px; }
 .hist-row { background: #242A31; border: 1px solid rgba(237,234,227,0.06); border-radius: 12px; padding: 12px 14px; display: flex; align-items: center; justify-content: space-between; }
