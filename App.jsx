@@ -2622,28 +2622,39 @@ const MEAL_IDEA_PROTEINS = Object.keys(MEAL_COMBOS)
   .filter(Boolean);
 
 // Pestañas de tipo de comida: cada una con su propia logica de sugerencia.
-// Cena reusa el flujo original (tildar que proteina tenes -> un plato
-// completo). Merienda/pre/post muestran directo las 2-3 opciones del banco
-// de SNACK_COMBOS, sin paso de seleccion (son listas cortas, mas rapido
-// mostrarlas todas que hacer tildar algo primero).
+// Almuerzo y Cena comparten el mismo flujo (tildar que proteina tenes -> un
+// plato completo, banco MEAL_COMBOS) -- son ambas "comida principal", solo
+// cambia el momento del dia. Merienda/pre/post muestran directo las 2-3
+// opciones del banco de SNACK_COMBOS, sin paso de seleccion (son listas
+// cortas, mas rapido mostrarlas todas que hacer tildar algo primero).
+const MEAL_IDEA_FULL_MEALS = ["almuerzo", "cena"];
 const MEAL_IDEA_TABS = [
+  { key: "almuerzo", label: "Almuerzo" },
   { key: "cena", label: "Cena" },
   { key: "merienda", label: "Merienda" },
   { key: "pre_entreno", label: "Pre-entreno" },
   { key: "post_entreno", label: "Post-entreno" },
 ];
 const MEAL_IDEA_TITLES = {
+  almuerzo: "¿Qué almuerzo hoy?",
   cena: "¿Qué cocino hoy?",
   merienda: "Ideas para la merienda",
   pre_entreno: "Antes de entrenar",
   post_entreno: "Después de entrenar",
 };
 const MEAL_IDEA_SUBTITLES = {
+  almuerzo: "Tildá lo que tenés a mano y te tiro una idea concreta",
   cena: "Tildá lo que tenés a mano y te tiro una idea concreta",
   merienda: "Opciones fáciles, sin cocinar",
   pre_entreno: "Carbohidrato rápido + proteína liviana, para no entrenar pesado",
   post_entreno: "Proteína y carbohidrato para recuperar después del entrenamiento",
 };
+// Al abrir la tarjeta, arranca en la pestaña que tiene mas sentido segun la
+// hora (antes de las 16 todavia no es hora de cena) -- asi no hay que ir a
+// buscar "Almuerzo" a mano al mediodia.
+function defaultMealIdeaType() {
+  return new Date().getHours() < 16 ? "almuerzo" : "cena";
+}
 
 // "Que cocino hoy" / meriendas / pre / post: sin IA, banco curado fijo
 // (MEAL_COMBOS y SNACK_COMBOS). En Cena la sugerencia rota por fecha asi no
@@ -2652,19 +2663,29 @@ const MEAL_IDEA_SUBTITLES = {
 // despues en "Nueva comida" es una accion aparte y deliberada.
 function MealIdeaCard({ targets, totals }) {
   const [open, setOpen] = useState(false);
-  const [mealType, setMealType] = useState("cena");
-  const [selected, setSelected] = useState([]);
-  const [cycleSeed, setCycleSeed] = useState(0);
+  const [mealType, setMealType] = useState(defaultMealIdeaType);
+  // Un almuerzo con pollo no tiene por que ser el mismo plato que una cena
+  // con pollo -- cada comida principal guarda su propia seleccion, asi
+  // cambiar de pestaña no pisa lo que ya habias tildado en la otra.
+  const [selectedByMeal, setSelectedByMeal] = useState({ almuerzo: [], cena: [] });
+  const [cycleSeedByMeal, setCycleSeedByMeal] = useState({ almuerzo: 0, cena: 0 });
+  const selected = selectedByMeal[mealType] || [];
+  const cycleSeed = cycleSeedByMeal[mealType] || 0;
 
   function toggleProtein(id) {
-    setSelected((prev) => (prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id]));
-    setCycleSeed(0); // nueva seleccion, arrancar de la primera idea de nuevo
+    setSelectedByMeal((prev) => {
+      const cur = prev[mealType] || [];
+      return { ...prev, [mealType]: cur.includes(id) ? cur.filter((p) => p !== id) : [...cur, id] };
+    });
+    setCycleSeedByMeal((prev) => ({ ...prev, [mealType]: 0 })); // nueva seleccion, arrancar de la primera idea de nuevo
   }
 
   const combos = useMemo(() => {
     const today = todayISO();
-    return selected.map((proteinId) => pickMealCombo(proteinId, seedFromString(today + proteinId) + cycleSeed)).filter(Boolean);
-  }, [selected, cycleSeed]);
+    // mealType entra en la seed para que almuerzo y cena no coincidan en el
+    // mismo plato solo por tildar la misma proteina el mismo dia.
+    return selected.map((proteinId) => pickMealCombo(proteinId, seedFromString(today + mealType + proteinId) + cycleSeed)).filter(Boolean);
+  }, [selected, cycleSeed, mealType]);
 
   const remainingKcal = targets?.calories != null ? Math.round(targets.calories - totals.calories) : null;
   const remainingProtein = targets?.protein != null ? Math.round((targets.protein - totals.protein) * 10) / 10 : null;
@@ -2694,7 +2715,7 @@ function MealIdeaCard({ targets, totals }) {
             ))}
           </div>
 
-          {mealType === "cena" ? (
+          {MEAL_IDEA_FULL_MEALS.includes(mealType) ? (
             <>
               <div className="chiprow wrap" style={{ marginTop: 10 }}>
                 {MEAL_IDEA_PROTEINS.map((f) => (
@@ -2736,7 +2757,7 @@ function MealIdeaCard({ targets, totals }) {
                     })}
                   </div>
                   <div className="section-sub" style={{ marginTop: 8 }}>Porciones de referencia — ajustá a ojo según tu hambre y lo que te quede del día.</div>
-                  <button className="cancel-btn" style={{ width: "100%", marginTop: 8 }} onClick={() => setCycleSeed((s) => s + 1)}>
+                  <button className="cancel-btn" style={{ width: "100%", marginTop: 8 }} onClick={() => setCycleSeedByMeal((prev) => ({ ...prev, [mealType]: (prev[mealType] || 0) + 1 }))}>
                     Otra idea
                   </button>
                   {remainingNote}
