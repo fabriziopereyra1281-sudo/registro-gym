@@ -799,6 +799,54 @@ export default function App() {
     }
   }
 
+  // Respaldo descargable: junta todo lo del usuario directo de Supabase (no
+  // lo que ya esta en memoria, por si hay algo que el estado local no tiene
+  // cargado) y arma un .json para bajar. No incluye los archivos de las
+  // fotos de progreso -- son binarios en Storage, solo se bajan sus datos
+  // (fecha, peso, cintura, el path del archivo).
+  async function exportAllData() {
+    const userId = session.user.id;
+    const [workouts, bw, activities, checkinsRes, meals, targetsRes, supplementsRes, supplementLogsRes, photosRes, coachNotesRes] = await Promise.all([
+      supabase.from("workout_logs").select("*").eq("user_id", userId).order("date", { ascending: true }),
+      supabase.from("bodyweight_logs").select("*").eq("user_id", userId).order("date", { ascending: true }),
+      supabase.from("activity_logs").select("*").eq("user_id", userId).order("date", { ascending: true }),
+      supabase.from("daily_checkins").select("*").eq("user_id", userId).order("date", { ascending: true }),
+      supabase.from("meal_logs").select("*").eq("user_id", userId).order("date", { ascending: true }),
+      supabase.from("nutrition_targets").select("*").eq("user_id", userId).maybeSingle(),
+      supabase.from("supplements").select("*").eq("user_id", userId).order("created_at", { ascending: true }),
+      supabase.from("supplement_logs").select("*").eq("user_id", userId).order("date", { ascending: true }),
+      supabase.from("progress_photos").select("*").eq("user_id", userId).order("date", { ascending: true }),
+      supabase.from("coach_notes").select("*").eq("user_id", userId).order("week_start", { ascending: true }),
+    ]);
+
+    const payload = {
+      exportado_el: new Date().toISOString(),
+      cuenta: session.user.email,
+      rutina: config,
+      entrenamientos: workouts.data || [],
+      peso_corporal: bw.data || [],
+      actividad_extra: activities.data || [],
+      chequeos_diarios: checkinsRes.data || [],
+      comidas: meals.data || [],
+      objetivos_nutricion: targetsRes.data || null,
+      suplementos: supplementsRes.data || [],
+      tomas_suplementos: supplementLogsRes.data || [],
+      fotos_progreso: (photosRes.data || []).map((p) => ({ ...p, nota: "solo los datos -- la imagen en si no se incluye, se descarga aparte desde Progreso" })),
+      notas_coach: coachNotesRes.data || [],
+    };
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `registro-gym-backup-${todayISO()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast("Backup descargado");
+  }
+
   function lastEntryFor(exerciseId) {
     const matches = logs.filter((l) => l.exerciseId === exerciseId).sort((a, b) => (a.date < b.date ? 1 : -1));
     return matches[0] || null;
@@ -943,6 +991,7 @@ export default function App() {
               toggleSupplementActive={toggleSupplementActive}
               deleteSupplement={deleteSupplement}
               toggleSupplementToday={toggleSupplementToday}
+              onExport={exportAllData}
             />
           ) : tab === "nutricion" ? (
             <NutricionTab
@@ -1995,9 +2044,39 @@ function HistEditRow({ log, onCancel, onSave }) {
 const RPE_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 const ENERGY_LABELS = { 1: "Muy baja", 2: "Baja", 3: "Media", 4: "Buena", 5: "Muy buena" };
 
+// Respaldo descargable de todo el historial (ver exportAllData en App()).
+// El archivo se arma y descarga del lado del navegador -- no hay servidor
+// de por medio, asi que no hace falta nada mas para que esto funcione.
+function ExportSection({ onExport }) {
+  const [exporting, setExporting] = useState(false);
+
+  async function handleClick() {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      await onExport();
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  return (
+    <section className="card">
+      <div className="section-title">Exportar mis datos</div>
+      <div className="section-sub">
+        Descargá un archivo con todo tu historial (entrenamientos, peso, comidas, suplementos) como respaldo propio. No incluye los archivos de las fotos de progreso, solo sus datos.
+      </div>
+      <button className="save-btn" style={{ marginTop: 10 }} onClick={handleClick} disabled={exporting}>
+        {exporting ? "Preparando…" : "Descargar backup (.json)"}
+      </button>
+    </section>
+  );
+}
+
 function MasTab({
   activityLogs, addActivity, deleteActivity, checkins, saveCheckin,
   supplements, supplementLogs, addSupplement, toggleSupplementActive, deleteSupplement, toggleSupplementToday,
+  onExport,
 }) {
   const todaysCheckin = checkins.find((c) => c.date === todayISO()) || null;
   const recentActivities = useMemo(
@@ -2043,6 +2122,8 @@ function MasTab({
         deleteSupplement={deleteSupplement}
         toggleSupplementToday={toggleSupplementToday}
       />
+
+      <ExportSection onExport={onExport} />
     </div>
   );
 }
