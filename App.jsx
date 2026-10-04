@@ -464,6 +464,11 @@ export default function App() {
   const [session, setSession] = useState(undefined); // undefined = cargando, null = sin sesión
   const [tab, setTab] = useState("hoy");
   const [selectedDay, setSelectedDay] = useState(defaultDayKey());
+  // El encabezado de arriba (visible en todas las pestañas) siempre muestra
+  // el dia real de hoy, sin importar que dia este navegando el usuario en la
+  // pestaña Hoy -- son dos cosas distintas: "que dia es hoy" vs "que rutina
+  // estoy mirando ahora".
+  const todayDayKey = defaultDayKey();
   const [config, setConfig] = useState(null);
   const [logs, setLogs] = useState([]);
   const [bwLogs, setBwLogs] = useState([]);
@@ -1120,7 +1125,7 @@ export default function App() {
         {(!isOnline || offlineQueue.length > 0) && (
           <OfflineBanner isOnline={isOnline} pendingCount={offlineQueue.length} />
         )}
-        <Header day={config[selectedDay]} dayName={DAY_LABELS[selectedDay]} />
+        <Header day={config[todayDayKey]} dayName={DAY_LABELS[todayDayKey]} />
 
         <main className="main">
           {tab === "hoy" ? (
