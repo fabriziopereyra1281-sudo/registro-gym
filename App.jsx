@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
   Dumbbell, TrendingUp, History, Plus, Trash2, ChevronDown, X, Check, Pencil, LogOut, Activity, Utensils, Sparkles,
-  Camera, Bell, WifiOff, Upload,
+  Camera, Bell, WifiOff, Upload, Share2,
 } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -160,6 +160,19 @@ function targetText(ex) {
   if (sets) return `${sets} series`;
   if (reps) return `${reps} reps`;
   return "";
+}
+
+// Texto plano para compartir por WhatsApp/notas/etc -- misma info que se ve
+// en la tarjeta de cada ejercicio (foco, nota, series x reps objetivo).
+function buildRoutineShareText(dayName, day) {
+  const lines = [`\ud83d\udcaa Rutina de ${dayName}${day.focus ? ` \u2014 ${day.focus}` : ""}`];
+  if (day.note) lines.push(day.note);
+  lines.push("");
+  day.exercises.forEach((ex) => {
+    const t = targetText(ex);
+    lines.push(`\u2022 ${ex.name}${t ? ` \u2014 ${t}` : ""}`);
+  });
+  return lines.join("\n");
 }
 
 function mapLogRow(row) {
@@ -1125,6 +1138,7 @@ export default function App() {
               addBw={addBw}
               photos={photos}
               setTab={setTab}
+              showToast={showToast}
             />
           ) : tab === "progreso" ? (
             <ProgresoTab
@@ -1471,9 +1485,31 @@ function CheckInReminder({ bwLogs, addBw, photos, setTab }) {
 function HoyTab({
   config, selectedDay, setSelectedDay, openForm, setOpenForm, lastEntryFor, bestEntryFor, addLog,
   editMode, setEditMode, updateFocus, updateNote, addExercise, updateExercise, removeExercise,
-  bwLogs, addBw, photos, setTab,
+  bwLogs, addBw, photos, setTab, showToast,
 }) {
   const day = config[selectedDay];
+
+  // Web Share API en celular (abre el picker nativo de apps); en desktop, o
+  // si el usuario cancela el picker, no suele estar disponible -- se cae a
+  // copiar al portapapeles.
+  async function shareRoutine() {
+    const text = buildRoutineShareText(DAY_LABELS[selectedDay], day);
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: `Rutina de ${DAY_LABELS[selectedDay]}`, text });
+      } catch (err) {
+        if (err?.name !== "AbortError") showToast("No se pudo compartir");
+      }
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast("Rutina copiada al portapapeles");
+    } catch {
+      showToast("No se pudo copiar la rutina");
+    }
+  }
+
   return (
     <div className="tabpane">
       <CheckInReminder bwLogs={bwLogs} addBw={addBw} photos={photos} setTab={setTab} />
@@ -1486,9 +1522,14 @@ function HoyTab({
         ))}
       </div>
 
-      <button className="edit-toggle" onClick={() => setEditMode(!editMode)}>
-        {editMode ? <><Check size={14} /> Listo</> : <><Pencil size={14} /> Editar rutina</>}
-      </button>
+      <div className="hoy-actions-row">
+        <button className="edit-toggle" onClick={shareRoutine}>
+          <Share2 size={14} /> Compartir
+        </button>
+        <button className="edit-toggle" onClick={() => setEditMode(!editMode)}>
+          {editMode ? <><Check size={14} /> Listo</> : <><Pencil size={14} /> Editar rutina</>}
+        </button>
+      </div>
 
       {editMode ? (
         <div className="cardlist">
@@ -3857,7 +3898,8 @@ const CSS = `
 .chip { flex: 1; padding: 8px 0; border-radius: 999px; border: 1px solid rgba(237,234,227,0.12); background: transparent; color: #8B93A0; font-family: 'JetBrains Mono', monospace; font-size: 11.5px; letter-spacing: 0.04em; text-transform: uppercase; }
 .chip-active { background: #C08A3E; border-color: #C08A3E; color: #1B1F24; font-weight: 600; }
 
-.edit-toggle { align-self: flex-end; display: flex; align-items: center; gap: 6px; background: rgba(237,234,227,0.06); border: 1px solid rgba(237,234,227,0.14); color: #EDEAE3; border-radius: 999px; padding: 7px 14px; font-size: 12.5px; font-weight: 600; }
+.hoy-actions-row { display: flex; gap: 8px; align-self: flex-end; }
+.edit-toggle { display: flex; align-items: center; gap: 6px; background: rgba(237,234,227,0.06); border: 1px solid rgba(237,234,227,0.14); color: #EDEAE3; border-radius: 999px; padding: 7px 14px; font-size: 12.5px; font-weight: 600; }
 
 .cardlist { display: flex; flex-direction: column; gap: 10px; }
 .card { background: #242A31; border: 1px solid rgba(237,234,227,0.06); border-radius: 16px; padding: 14px 16px; }
