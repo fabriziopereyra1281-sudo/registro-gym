@@ -228,6 +228,9 @@ function mapTargetsRow(row) {
     neckCm: row.neck_cm,
     targetBfLow: row.target_bf_low,
     targetBfHigh: row.target_bf_high,
+    age: row.age,
+    sex: row.sex,
+    activityLevel: row.activity_level,
   };
 }
 function mapSupplementRow(row) {
@@ -834,6 +837,9 @@ export default function App() {
       neck_cm: merged.neckCm ?? null,
       target_bf_low: merged.targetBfLow ?? null,
       target_bf_high: merged.targetBfHigh ?? null,
+      age: merged.age ?? null,
+      sex: merged.sex ?? null,
+      activity_level: merged.activityLevel ?? null,
       updated_at: new Date().toISOString(),
     };
     const { data, error } = await supabase
@@ -2815,9 +2821,25 @@ function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwL
       .reduce((sum, a) => sum + computeActivityKcal(a, latestWeight), 0);
   }, [activityLogs, latestWeight, selectedDate]);
 
+  // Un dia de entreno programado que paso sin entreno ni actividad cargada
+  // (ej. un dia de lluvia que no dejo moverse) cuenta como descanso a los
+  // efectos del objetivo -- es lo mismo que cuando el split ya marca
+  // descanso, solo que lo "decide" la ausencia de registros en vez del
+  // calendario. Para hoy, solo despues de cierta hora (no se castiga el
+  // objetivo a la mañana solo porque todavia no entrenaste).
+  const trainedThatDay = useMemo(() => {
+    const dayKey = DAY_KEY_BY_WEEKDAY[weekdayOfISO(selectedDate)];
+    return logs.some((l) => l.date === selectedDate && (!dayKey || l.day === dayKey));
+  }, [logs, selectedDate]);
+  const skippedTrainingDay = useMemo(() => {
+    if (isRestDay || trainedThatDay || activityKcal > 0) return false;
+    if (isToday) return new Date().getHours() >= UNTRAINED_DAY_CUTOFF_HOUR;
+    return true;
+  }, [isRestDay, trainedThatDay, activityKcal, isToday]);
+
   const effectiveTargets = useMemo(
-    () => computeEffectiveTargets(targets, { isRestDay, activityKcal }),
-    [targets, isRestDay, activityKcal]
+    () => computeEffectiveTargets(targets, { isRestDay, skippedTrainingDay, activityKcal }),
+    [targets, isRestDay, skippedTrainingDay, activityKcal]
   );
 
   const [suggestFoodId, setSuggestFoodId] = useState(null);
@@ -2968,22 +2990,29 @@ function computeActivityKcal(activity, weightKg) {
   return Math.round((met * 3.5 * weightKg / 200) * activity.durationMin);
 }
 
+// Hora a partir de la cual, en un dia de entreno programado, "todavia no
+// entrenaste ni cargaste actividad" pasa a leerse como "hoy no hiciste nada"
+// (ej. un dia de lluvia) en vez de "todavia no te tocaba". Antes de esta
+// hora no se toca el objetivo solo porque no entrenaste a la mañana.
+const UNTRAINED_DAY_CUTOFF_HOUR = 20;
+
 // Ajusta el objetivo base del dia (el que se guarda fijo en "Objetivos
-// diarios") segun el tipo de dia: en descanso baja un poco los carbohidratos
-// (la proteina nunca se toca, para no resignar preservacion muscular); si
-// hubo actividad extra hoy, suma esas kcal como carbohidratos para reponer
-// lo gastado. Nunca modifica lo guardado, solo lo que se muestra hoy.
-function computeEffectiveTargets(targets, { isRestDay, activityKcal }) {
+// diarios") segun el tipo de dia: en descanso (programado o porque el dia
+// de entreno paso sin nada cargado) baja un poco los carbohidratos (la
+// proteina nunca se toca, para no resignar preservacion muscular); si hubo
+// actividad extra hoy, suma esas kcal como carbohidratos para reponer lo
+// gastado. Nunca modifica lo guardado, solo lo que se muestra hoy.
+function computeEffectiveTargets(targets, { isRestDay, skippedTrainingDay, activityKcal }) {
   if (!targets) return null;
   let carbs = targets.carbs || 0;
   let calories = targets.calories || 0;
   const notes = [];
 
-  if (isRestDay && carbs > 0) {
+  if ((isRestDay || skippedTrainingDay) && carbs > 0) {
     const cut = Math.round(carbs * 0.15);
     carbs = Math.max(0, carbs - cut);
     calories -= cut * 4;
-    notes.push(`descanso: -${fmtNum(cut)}g carbos`);
+    notes.push(isRestDay ? `descanso: -${fmtNum(cut)}g carbos` : `sin entreno ni actividad hoy: -${fmtNum(cut)}g carbos`);
   }
   if (activityKcal > 0) {
     const bonusCarbs = Math.round(activityKcal / 4);
@@ -3118,37 +3147,81 @@ function MacroBar({ label, value, target, unit, colorClass }) {
   );
 }
 
-// Objetivo diario automatico a partir del peso: manteniemiento ~33 kcal/kg
-// (moderadamente activo, pesas 5x/semana) menos un deficit leve del 15% para
-// bajar grasa sin resignar musculo; proteina alta (2.2 g/kg) para preservar
-// masa magra en deficit; grasas en un piso saludable (0.8 g/kg); el resto,
-// carbohidratos. Son las mismas cuentas que se usan para sugerir un plan de
-// nutricion deportiva estandar -- el usuario puede ajustarlas a mano despues.
-function computeAutoTargets(weightKg) {
+// Multiplicador de actividad sobre el BMR (formula de Harris-Benedict/Katch,
+// estandar en nutricion deportiva) para pasar de "gasto en reposo" a gasto
+// diario total (TDEE). "Moderada" es el default razonable para alguien que
+// entrena pesas ~5 dias/semana con un trabajo no fisico.
+const ACTIVITY_MULTIPLIERS = {
+  sedentario: 1.2,
+  liviana: 1.375,
+  moderada: 1.55,
+  intensa: 1.725,
+};
+const ACTIVITY_LEVEL_LABELS = {
+  sedentario: "Sedentario (trabajo de escritorio, casi no camino)",
+  liviana: "Actividad liviana (camino bastante, de pie seguido)",
+  moderada: "Actividad moderada (entreno 4-5x/semana)",
+  intensa: "Actividad intensa (entreno + trabajo fisico, o 6-7x/semana)",
+};
+
+// BMR (gasto en reposo) por la formula de Mifflin-St Jeor -- la mas precisa
+// de las formulas gratuitas estandar (margen de error tipico ~10%), a
+// partir de peso, altura, edad y sexo biologico. Sin esos cuatro datos no
+// se puede calcular (vuelve null y se usa la regla practica como fallback).
+function computeMifflinBMR({ weightKg, heightCm, age, sex }) {
+  if (!weightKg || !heightCm || !age || !sex) return null;
+  const base = 10 * weightKg + 6.25 * heightCm - 5 * age;
+  return Math.round(sex === "m" ? base + 5 : base - 161);
+}
+
+// Objetivo diario automatico a partir del peso (y, si estan cargados, altura
+// + edad + sexo + nivel de actividad): gasto de mantenimiento menos un
+// deficit leve del 15% para bajar grasa sin resignar musculo; proteina alta
+// (2.2 g/kg) para preservar masa magra en deficit; grasas en un piso
+// saludable (0.8 g/kg); el resto, carbohidratos. Con los cuatro datos del
+// BMR, el mantenimiento sale de Mifflin-St Jeor x multiplicador de
+// actividad (TDEE real); sin ellos, cae a la regla practica de 33 kcal/kg
+// (moderadamente activo, pesas 5x/semana) que ya se usaba antes.
+function computeAutoTargets(weightKg, { heightCm, age, sex, activityLevel } = {}) {
   if (!weightKg || weightKg <= 0) return null;
-  const maintenance = weightKg * 33;
+  const bmr = computeMifflinBMR({ weightKg, heightCm, age, sex });
+  const usedMifflin = bmr != null;
+  const multiplier = ACTIVITY_MULTIPLIERS[activityLevel] || ACTIVITY_MULTIPLIERS.moderada;
+  const maintenance = usedMifflin ? bmr * multiplier : weightKg * 33;
   const calories = Math.round(maintenance * 0.85);
   const protein = Math.round(weightKg * 2.2);
   const fat = Math.round(weightKg * 0.8);
   const carbsKcal = calories - protein * 4 - fat * 9;
   const carbs = Math.max(0, Math.round(carbsKcal / 4));
-  return { calories, protein, carbs, fat };
+  return { calories, protein, carbs, fat, usedMifflin, bmr, multiplier, maintenance: Math.round(maintenance) };
 }
 
 function AutoBreakdown({ weight, auto }) {
-  const maintenance = Math.round(weight * 33);
   const proteinKcal = auto.protein * 4;
   const fatKcal = auto.fat * 9;
   const carbsKcal = auto.carbs * 4;
   return (
     <div className="breakdown">
-      <div className="breakdown-row">
-        <span>Mantenimiento estimado</span>
-        <span className="mono">{fmtNum(weight)} kg × 33 kcal/kg = {fmtNum(maintenance)} kcal</span>
-      </div>
+      {auto.usedMifflin ? (
+        <>
+          <div className="breakdown-row">
+            <span>BMR (Mifflin-St Jeor)</span>
+            <span className="mono">{fmtNum(auto.bmr)} kcal en reposo</span>
+          </div>
+          <div className="breakdown-row">
+            <span>Gasto total (TDEE)</span>
+            <span className="mono">{fmtNum(auto.bmr)} × {fmtNum(auto.multiplier)} = {fmtNum(auto.maintenance)} kcal</span>
+          </div>
+        </>
+      ) : (
+        <div className="breakdown-row">
+          <span>Mantenimiento estimado</span>
+          <span className="mono">{fmtNum(weight)} kg × 33 kcal/kg = {fmtNum(auto.maintenance)} kcal</span>
+        </div>
+      )}
       <div className="breakdown-row">
         <span>Déficit leve (15%)</span>
-        <span className="mono">{fmtNum(maintenance)} × 0,85 = {fmtNum(auto.calories)} kcal</span>
+        <span className="mono">{fmtNum(auto.maintenance)} × 0,85 = {fmtNum(auto.calories)} kcal</span>
       </div>
       <div className="breakdown-row">
         <span>Proteína</span>
@@ -3163,14 +3236,22 @@ function AutoBreakdown({ weight, auto }) {
         <span className="mono">resto de las kcal ÷ 4 = {fmtNum(auto.carbs)} g ({fmtNum(carbsKcal)} kcal)</span>
       </div>
       <div className="breakdown-note">
-        Regla práctica para alguien que entrena pesas ~5 días/semana y quiere bajar grasa preservando músculo. No reemplaza un análisis de un nutricionista, pero es un punto de partida razonable — se recalcula solo cada vez que cargues un peso nuevo.
+        {auto.usedMifflin
+          ? "BMR real según tu peso, altura, edad y sexo, más tu nivel de actividad. Más preciso que una regla fija, pero sigue siendo una estimación (margen típico ±10%) — no reemplaza un análisis de un nutricionista."
+          : "Regla práctica para alguien que entrena pesas ~5 días/semana y quiere bajar grasa preservando músculo. Completá altura, edad, sexo y nivel de actividad abajo para un cálculo más preciso (BMR real en vez de esta regla fija)."}
       </div>
     </div>
   );
 }
 
 function TargetsCard({ targets, onSave, latestWeight }) {
-  const auto = useMemo(() => computeAutoTargets(latestWeight), [latestWeight]);
+  const [age, setAge] = useState(targets?.age != null ? toInput(targets.age) : "");
+  const [sex, setSex] = useState(targets?.sex || "");
+  const [activityLevel, setActivityLevel] = useState(targets?.activityLevel || "moderada");
+  const auto = useMemo(
+    () => computeAutoTargets(latestWeight, { heightCm: targets?.heightCm, age: toNum(age), sex, activityLevel }),
+    [latestWeight, targets?.heightCm, age, sex, activityLevel]
+  );
   const [calories, setCalories] = useState(targets?.calories != null ? toInput(targets.calories) : auto ? String(auto.calories) : "");
   const [protein, setProtein] = useState(targets?.protein != null ? toInput(targets.protein) : auto ? String(auto.protein) : "");
   const [carbs, setCarbs] = useState(targets?.carbs != null ? toInput(targets.carbs) : auto ? String(auto.carbs) : "");
@@ -3187,7 +3268,10 @@ function TargetsCard({ targets, onSave, latestWeight }) {
   }
 
   function submit() {
-    onSave({ calories: toNum(calories), protein: toNum(protein), carbs: toNum(carbs), fat: toNum(fat) });
+    onSave({
+      calories: toNum(calories), protein: toNum(protein), carbs: toNum(carbs), fat: toNum(fat),
+      age: toNum(age), sex: sex || null, activityLevel: activityLevel || null,
+    });
     setEditing(false);
   }
 
@@ -3239,6 +3323,30 @@ function TargetsCard({ targets, onSave, latestWeight }) {
           {showDetail && <AutoBreakdown weight={latestWeight} auto={auto} />}
         </>
       )}
+
+      <div style={{ marginTop: 10 }}>
+        <div className="edit-label">Para un cálculo más preciso (opcional)</div>
+        {!targets?.heightCm && (
+          <div className="section-sub" style={{ marginTop: 4, marginBottom: 8 }}>
+            Completá tu altura en "Meta física" (más abajo) para habilitar el cálculo real de gasto (BMR) en vez de la regla fija.
+          </div>
+        )}
+        <div className="side-grid two" style={{ marginTop: 8 }}>
+          <NumInput placeholder="Edad" decimal={false} value={age} onChange={setAge} />
+          <div className="select-wrap">
+            <select className="select" value={activityLevel} onChange={(e) => setActivityLevel(e.target.value)}>
+              {Object.entries(ACTIVITY_LEVEL_LABELS).map(([key, label]) => (
+                <option key={key} value={key}>{label}</option>
+              ))}
+            </select>
+            <ChevronDown size={16} className="select-chevron" />
+          </div>
+        </div>
+        <div className="chiprow" style={{ marginTop: 8 }}>
+          <button type="button" className={"chip" + (sex === "m" ? " chip-active" : "")} onClick={() => setSex("m")}>Varón</button>
+          <button type="button" className={"chip" + (sex === "f" ? " chip-active" : "")} onClick={() => setSex("f")}>Mujer</button>
+        </div>
+      </div>
 
       <div className="side-grid two" style={{ marginTop: 10 }}>
         <NumInput placeholder="Calorías (kcal)" decimal={false} value={calories} onChange={setCalories} />

@@ -89,6 +89,14 @@ alter table nutrition_targets add column if not exists neck_cm numeric;
 alter table nutrition_targets add column if not exists target_bf_low numeric;
 alter table nutrition_targets add column if not exists target_bf_high numeric;
 
+-- Datos para el calculo de gasto calorico por formula de Mifflin-St Jeor
+-- (BMR real segun peso/altura/edad/sexo, en vez de la regla practica de
+-- 33 kcal/kg). Opcionales: sin esto, el calculo automatico de objetivos
+-- sigue funcionando con la regla practica de antes.
+alter table nutrition_targets add column if not exists age int;
+alter table nutrition_targets add column if not exists sex text;
+alter table nutrition_targets add column if not exists activity_level text;
+
 -- Comidas registradas, con sus macros. meal_type es texto libre (desayuno,
 -- almuerzo, merienda, cena, pre-entreno, post-entreno, otro) para no atarse
 -- a un enum rigido.
