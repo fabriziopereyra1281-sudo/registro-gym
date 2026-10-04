@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
   Dumbbell, TrendingUp, History, Plus, Trash2, ChevronDown, X, Check, Pencil, LogOut, Activity, Utensils, Sparkles,
-  Camera, Bell,
+  Camera, Bell, WifiOff, Upload,
 } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -461,10 +461,107 @@ export default function App() {
   const [toast, setToast] = useState("");
   const [recoveryMode, setRecoveryMode] = useState(false);
 
+  // Cola de guardados sin conexión: si falla el insert/update/delete (sin señal,
+  // o wifi del gym que figura conectado pero no tiene salida real a internet),
+  // el cambio se aplica local de una y se encola para mandarlo solo apenas
+  // vuelva la conexión, en vez de perderse.
+  const [isOnline, setIsOnline] = useState(() => (typeof navigator !== "undefined" ? navigator.onLine : true));
+  const [offlineQueue, setOfflineQueue] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("offlineQueue")) || []; } catch { return []; }
+  });
+  const flushingRef = useRef(false);
+
   function showToast(msg) {
     setToast(msg);
     setTimeout(() => setToast(""), 1600);
   }
+
+  function tempId() {
+    return `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  }
+  function isTempId(id) {
+    return typeof id === "string" && id.startsWith("tmp_");
+  }
+
+  useEffect(() => {
+    try { localStorage.setItem("offlineQueue", JSON.stringify(offlineQueue)); } catch {}
+  }, [offlineQueue]);
+
+  useEffect(() => {
+    function goOnline() { setIsOnline(true); }
+    function goOffline() { setIsOnline(false); }
+    window.addEventListener("online", goOnline);
+    window.addEventListener("offline", goOffline);
+    return () => {
+      window.removeEventListener("online", goOnline);
+      window.removeEventListener("offline", goOffline);
+    };
+  }, []);
+
+  // Reemplaza en el estado local la fila optimista (con id temporal) por la
+  // fila real que devolvió el server -- se usa tanto al confirmar un insert
+  // encolado como un update encolado, en ambos casos "la fila con tal id pasa
+  // a ser esta otra ya confirmada".
+  function applyServerRow(table, localId, data) {
+    if (table === "workout_logs") setLogs((prev) => prev.map((l) => (l.id === localId ? mapLogRow(data) : l)));
+    else if (table === "bodyweight_logs") setBwLogs((prev) => prev.map((b) => (b.id === localId ? mapBwRow(data) : b)));
+    else if (table === "activity_logs") setActivityLogs((prev) => prev.map((a) => (a.id === localId ? mapActivityRow(data) : a)));
+  }
+
+  function patchRowToCamel(row) {
+    return {
+      weight: row.weight, reps: row.reps, weightR: row.weight_r, repsR: row.reps_r,
+      weightL: row.weight_l, repsL: row.reps_l, rir: row.rir,
+    };
+  }
+
+  // Al recargar la app, lo que ya está en el server (logRows/bwRows/activityRows)
+  // todavía no tiene los cambios que quedaron pendientes de una sesión sin
+  // conexión anterior (ver offlineQueue más arriba) -- hay que volver a
+  // aplicarlos encima para no mostrar la app como si esos cambios nunca
+  // hubieran pasado, hasta que se terminen de sincronizar solos.
+  function mergeOfflineQueue(table, baseRows, mapFn) {
+    let rows = baseRows.map(mapFn);
+    offlineQueue.filter((q) => q.table === table).forEach((q) => {
+      if (q.op === "insert") rows.push(mapFn({ id: q.id, ...q.row }));
+      else if (q.op === "update") rows = rows.map((r) => (r.id === q.targetId ? { ...r, ...patchRowToCamel(q.row) } : r));
+      else if (q.op === "delete") rows = rows.filter((r) => r.id !== q.targetId);
+    });
+    return rows;
+  }
+
+  // Procesa de a un pendiente por vez (en orden) para no pisarse con reintentos
+  // en paralelo. Si uno falla, se corta -- se reintenta solo cuando vuelva a
+  // cambiar isOnline u offlineQueue (por ejemplo, el proximo evento "online").
+  // Espera a que termine la carga inicial (dataLoaded) para no pisarse con el
+  // merge de mergeOfflineQueue en loadAllData, que todavia necesita leer la
+  // cola tal cual estaba antes de que se empiece a vaciar.
+  useEffect(() => {
+    if (!isOnline || !dataLoaded || offlineQueue.length === 0 || flushingRef.current) return;
+    flushingRef.current = true;
+    const item = offlineQueue[0];
+    (async () => {
+      try {
+        if (item.op === "insert") {
+          const { data, error } = await supabase.from(item.table).insert(item.row).select().single();
+          if (error) throw error;
+          applyServerRow(item.table, item.id, data);
+        } else if (item.op === "update") {
+          const { data, error } = await supabase.from(item.table).update(item.row).eq("id", item.targetId).select().single();
+          if (error) throw error;
+          applyServerRow(item.table, item.targetId, data);
+        } else if (item.op === "delete") {
+          const { error } = await supabase.from(item.table).delete().eq("id", item.targetId);
+          if (error) throw error;
+        }
+        setOfflineQueue((prev) => prev.filter((q) => q.id !== item.id));
+      } catch {
+        // sigue sin salida real a internet pese a isOnline -- se reintenta despues
+      } finally {
+        flushingRef.current = false;
+      }
+    })();
+  }, [isOnline, offlineQueue]);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
@@ -528,9 +625,9 @@ export default function App() {
       .from("coach_notes").select("*").eq("user_id", userId).order("week_start", { ascending: false }).limit(1).maybeSingle();
 
     setConfig(cfg);
-    setLogs((logRows || []).map(mapLogRow));
-    setBwLogs((bwRows || []).map(mapBwRow));
-    setActivityLogs((activityRows || []).map(mapActivityRow));
+    setLogs(mergeOfflineQueue("workout_logs", logRows || [], mapLogRow));
+    setBwLogs(mergeOfflineQueue("bodyweight_logs", bwRows || [], mapBwRow));
+    setActivityLogs(mergeOfflineQueue("activity_logs", activityRows || [], mapActivityRow));
     setCheckins((checkinRows || []).map(mapCheckinRow));
     setNutritionTargets(mapTargetsRow(targetsRow));
     setMealLogs((mealRows || []).map(mapMealRow));
@@ -565,11 +662,18 @@ export default function App() {
       reps_l: entry.repsL ?? null,
       rir: entry.rir ?? null,
     };
-    const { data, error } = await supabase.from("workout_logs").insert(row).select().single();
-    if (!error && data) {
-      setLogs((prev) => [...prev, mapLogRow(data)]);
-      showToast(entry.prLabel ? `🏆 ¡Nuevo PR! ${entry.prLabel}` : "Set guardado");
+    if (isOnline) {
+      const { data, error } = await supabase.from("workout_logs").insert(row).select().single();
+      if (!error && data) {
+        setLogs((prev) => [...prev, mapLogRow(data)]);
+        showToast(entry.prLabel ? `🏆 ¡Nuevo PR! ${entry.prLabel}` : "Set guardado");
+        return;
+      }
     }
+    const id = tempId();
+    setLogs((prev) => [...prev, mapLogRow({ id, ...row })]);
+    setOfflineQueue((prev) => [...prev, { id, table: "workout_logs", op: "insert", row }]);
+    showToast("📡 Set guardado sin conexión — se sube solo");
   }
 
   async function updateLog(id, patch) {
@@ -582,25 +686,59 @@ export default function App() {
       reps_l: patch.repsL ?? null,
       rir: patch.rir ?? null,
     };
-    const { data, error } = await supabase.from("workout_logs").update(row).eq("id", id).select().single();
-    if (!error && data) {
-      setLogs((prev) => prev.map((l) => (l.id === id ? mapLogRow(data) : l)));
-      showToast("Registro actualizado");
+    const localPatch = {
+      weight: row.weight, reps: row.reps, weightR: row.weight_r, repsR: row.reps_r,
+      weightL: row.weight_l, repsL: row.reps_l, rir: row.rir,
+    };
+    // El set todavia no se mando al server (id temporal): el cambio se mergea
+    // directo en el insert pendiente, no hace falta un update aparte.
+    if (isTempId(id)) {
+      setOfflineQueue((prev) => prev.map((q) => (q.id === id ? { ...q, row: { ...q.row, ...row } } : q)));
+      setLogs((prev) => prev.map((l) => (l.id === id ? { ...l, ...localPatch } : l)));
+      showToast("Registro actualizado (pendiente de sincronizar)");
+      return;
     }
+    if (isOnline) {
+      const { data, error } = await supabase.from("workout_logs").update(row).eq("id", id).select().single();
+      if (!error && data) {
+        setLogs((prev) => prev.map((l) => (l.id === id ? mapLogRow(data) : l)));
+        showToast("Registro actualizado");
+        return;
+      }
+    }
+    setLogs((prev) => prev.map((l) => (l.id === id ? { ...l, ...localPatch } : l)));
+    setOfflineQueue((prev) => [...prev, { id: tempId(), table: "workout_logs", op: "update", targetId: id, row }]);
+    showToast("📡 Registro actualizado sin conexión — se sube solo");
   }
 
   async function deleteLog(id) {
-    await supabase.from("workout_logs").delete().eq("id", id);
+    if (isTempId(id)) {
+      setOfflineQueue((prev) => prev.filter((q) => q.id !== id));
+      setLogs((prev) => prev.filter((l) => l.id !== id));
+      return;
+    }
     setLogs((prev) => prev.filter((l) => l.id !== id));
+    if (isOnline) {
+      const { error } = await supabase.from("workout_logs").delete().eq("id", id);
+      if (!error) return;
+    }
+    setOfflineQueue((prev) => [...prev, { id: tempId(), table: "workout_logs", op: "delete", targetId: id }]);
   }
 
   async function addBw(entry) {
     const row = { user_id: session.user.id, date: entry.date, weight: entry.weight, waist: entry.waist ?? null };
-    const { data, error } = await supabase.from("bodyweight_logs").insert(row).select().single();
-    if (!error && data) {
-      setBwLogs((prev) => [...prev, mapBwRow(data)]);
-      showToast("Peso registrado");
+    if (isOnline) {
+      const { data, error } = await supabase.from("bodyweight_logs").insert(row).select().single();
+      if (!error && data) {
+        setBwLogs((prev) => [...prev, mapBwRow(data)]);
+        showToast("Peso registrado");
+        return;
+      }
     }
+    const id = tempId();
+    setBwLogs((prev) => [...prev, mapBwRow({ id, ...row })]);
+    setOfflineQueue((prev) => [...prev, { id, table: "bodyweight_logs", op: "insert", row }]);
+    showToast("📡 Peso guardado sin conexión — se sube solo");
   }
 
   async function addActivity(entry) {
@@ -614,16 +752,32 @@ export default function App() {
       avg_hr: entry.avgHr ?? null,
       notes: entry.notes || null,
     };
-    const { data, error } = await supabase.from("activity_logs").insert(row).select().single();
-    if (!error && data) {
-      setActivityLogs((prev) => [...prev, mapActivityRow(data)]);
-      showToast("Actividad guardada");
+    if (isOnline) {
+      const { data, error } = await supabase.from("activity_logs").insert(row).select().single();
+      if (!error && data) {
+        setActivityLogs((prev) => [...prev, mapActivityRow(data)]);
+        showToast("Actividad guardada");
+        return;
+      }
     }
+    const id = tempId();
+    setActivityLogs((prev) => [...prev, mapActivityRow({ id, ...row })]);
+    setOfflineQueue((prev) => [...prev, { id, table: "activity_logs", op: "insert", row }]);
+    showToast("📡 Actividad guardada sin conexión — se sube sola");
   }
 
   async function deleteActivity(id) {
-    await supabase.from("activity_logs").delete().eq("id", id);
+    if (isTempId(id)) {
+      setOfflineQueue((prev) => prev.filter((q) => q.id !== id));
+      setActivityLogs((prev) => prev.filter((a) => a.id !== id));
+      return;
+    }
     setActivityLogs((prev) => prev.filter((a) => a.id !== id));
+    if (isOnline) {
+      const { error } = await supabase.from("activity_logs").delete().eq("id", id);
+      if (!error) return;
+    }
+    setOfflineQueue((prev) => [...prev, { id: tempId(), table: "activity_logs", op: "delete", targetId: id }]);
   }
 
   async function saveCheckin(entry) {
@@ -939,6 +1093,9 @@ export default function App() {
       <style>{CSS}</style>
       <div className="frame">
         <TopBar email={session.user.email} />
+        {(!isOnline || offlineQueue.length > 0) && (
+          <OfflineBanner isOnline={isOnline} pendingCount={offlineQueue.length} />
+        )}
         <Header day={config[selectedDay]} dayName={DAY_LABELS[selectedDay]} />
 
         <main className="main">
@@ -1154,6 +1311,24 @@ function TopBar({ email }) {
       <button className="manage-btn" onClick={() => supabase.auth.signOut()}>
         <LogOut size={15} />
       </button>
+    </div>
+  );
+}
+
+function OfflineBanner({ isOnline, pendingCount }) {
+  return (
+    <div className={"offline-banner" + (isOnline ? " syncing" : "")}>
+      {isOnline ? (
+        <>
+          <Upload size={13} />
+          <span>Sincronizando {pendingCount} {pendingCount === 1 ? "cambio" : "cambios"}…</span>
+        </>
+      ) : (
+        <>
+          <WifiOff size={13} />
+          <span>Sin conexión{pendingCount > 0 ? ` — ${pendingCount} ${pendingCount === 1 ? "cambio" : "cambios"} por subir` : ""}</span>
+        </>
+      )}
     </div>
   );
 }
@@ -3606,6 +3781,9 @@ const CSS = `
 .topbar { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px 0; }
 .topbar-email { font-size: 11px; color: #5C6470; }
 .manage-btn { background: none; border: 1px solid rgba(237,234,227,0.14); border-radius: 8px; color: #8B93A0; padding: 6px; flex-shrink: 0; }
+
+.offline-banner { display: flex; align-items: center; gap: 7px; margin: 10px 16px 0; padding: 8px 12px; border-radius: 10px; background: rgba(192,103,58,0.14); border: 1px solid rgba(192,103,58,0.35); color: #C0673A; font-size: 12px; font-weight: 600; }
+.offline-banner.syncing { background: rgba(192,138,62,0.12); border-color: rgba(192,138,62,0.35); color: #C08A3E; }
 
 .auth-shell { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 32px 24px; gap: 18px; min-height: 100vh; width: 100%; max-width: 420px; margin: 0 auto; }
 .auth-title { font-family: 'Oswald', sans-serif; font-weight: 600; font-size: 30px; text-transform: uppercase; color: #EDEAE3; }
