@@ -137,6 +137,17 @@ function toInput(n) {
   if (n === null || n === undefined) return "";
   return String(n).replace(".", ",");
 }
+// 1RM estimado (formula de Epley): cuanto podrias levantar a 1 repeticion,
+// a partir del peso y las reps de un set cualquiera. Mas comparable que el
+// peso crudo cuando las reps varian de un set a otro (80kgx5 vs 85kgx3 no se
+// pueden comparar directo por peso, pero si por 1RM estimado). Sin reps
+// cargadas no hay forma de estimar mejor que el peso mismo, asi que cae en
+// eso (no es una invencion, es simplemente no tener mas informacion).
+function estimate1RM(weight, reps) {
+  if (weight == null) return null;
+  if (!reps || reps <= 1) return Math.round(weight * 10) / 10;
+  return Math.round(weight * (1 + reps / 30) * 10) / 10;
+}
 function targetText(ex) {
   const sets = String(ex.sets ?? "").trim();
   const reps = String(ex.reps ?? "").trim();
@@ -1417,6 +1428,7 @@ function ProgresoTab({ logs, bwLogs, addBw, config, allExercises, photos, photoU
   const [selectedExerciseId, setSelectedExerciseId] = useState(allExercises[0]?.id || null);
   const [bwInput, setBwInput] = useState("");
   const [waistInput, setWaistInput] = useState("");
+  const [liftMetric, setLiftMetric] = useState("peso"); // "peso" | "1rm"
 
   useEffect(() => {
     if (allExercises.length && !allExercises.find((e) => e.id === selectedExerciseId)) {
@@ -1448,7 +1460,15 @@ function ProgresoTab({ logs, bwLogs, addBw, config, allExercises, photos, photoU
 
   const liftData = useMemo(() => {
     return logs.filter((l) => l.exerciseId === selectedExerciseId).sort((a, b) => (a.date > b.date ? 1 : -1))
-      .map((l) => ({ date: fmtShort(l.date), Peso: l.unilateral ? null : l.weight, Derecho: l.unilateral ? l.weightR : null, Izquierdo: l.unilateral ? l.weightL : null }));
+      .map((l) => ({
+        date: fmtShort(l.date),
+        Peso: l.unilateral ? null : l.weight,
+        Derecho: l.unilateral ? l.weightR : null,
+        Izquierdo: l.unilateral ? l.weightL : null,
+        "1RM": l.unilateral ? null : estimate1RM(l.weight, l.reps),
+        "1RM Der": l.unilateral ? estimate1RM(l.weightR, l.repsR) : null,
+        "1RM Izq": l.unilateral ? estimate1RM(l.weightL, l.repsL) : null,
+      }));
   }, [logs, selectedExerciseId]);
 
   const bwData = useMemo(() => [...bwLogs].sort((a, b) => (a.date > b.date ? 1 : -1)).map((b) => ({ date: fmtShort(b.date), Peso: b.weight })), [bwLogs]);
@@ -1585,26 +1605,37 @@ function ProgresoTab({ logs, bwLogs, addBw, config, allExercises, photos, photoU
         {liftData.length === 0 ? (
           <div className="empty small">Todavía no cargaste sets de este ejercicio.</div>
         ) : (
-          <div className="chart-wrap">
-            <ResponsiveContainer width="100%" height={180}>
-              <LineChart data={liftData} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#333B44" />
-                <XAxis dataKey="date" stroke="#8B93A0" fontSize={11} />
-                <YAxis stroke="#8B93A0" fontSize={11} />
-                <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v, name) => [`${fmtNum(v)} kg`, name]} />
-                {/* El texto de la leyenda va en tinta neutra: la identidad la carga la marca de color de al lado. */}
-                <Legend wrapperStyle={{ fontSize: 11 }} formatter={(value) => <span style={{ color: "#8B93A0" }}>{value}</span>} />
-                {exerciseInfo?.unilateral ? (
-                  <>
-                    <Line type="monotone" dataKey="Derecho" stroke="#C08A3E" strokeWidth={2.5} dot={{ r: 3 }} connectNulls />
-                    <Line type="monotone" dataKey="Izquierdo" stroke={SERIE_2} strokeWidth={2.5} dot={{ r: 3 }} connectNulls />
-                  </>
-                ) : (
-                  <Line type="monotone" dataKey="Peso" stroke="#C08A3E" strokeWidth={2.5} dot={{ r: 3 }} />
-                )}
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
+          <>
+            <div className="chiprow" style={{ marginTop: 10, marginBottom: 2 }}>
+              <button className={"chip" + (liftMetric === "peso" ? " chip-active" : "")} onClick={() => setLiftMetric("peso")}>Peso</button>
+              <button className={"chip" + (liftMetric === "1rm" ? " chip-active" : "")} onClick={() => setLiftMetric("1rm")}>1RM estimado</button>
+            </div>
+            {liftMetric === "1rm" && (
+              <div className="section-sub" style={{ marginTop: 6, marginBottom: 0 }}>
+                Estimación (fórmula de Epley) de cuánto levantarías a 1 repetición, a partir del peso y las reps de cada set — más comparable que el peso solo cuando las reps varían de un set a otro.
+              </div>
+            )}
+            <div className="chart-wrap">
+              <ResponsiveContainer width="100%" height={180}>
+                <LineChart data={liftData} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#333B44" />
+                  <XAxis dataKey="date" stroke="#8B93A0" fontSize={11} />
+                  <YAxis stroke="#8B93A0" fontSize={11} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v, name) => [`${fmtNum(v)} kg`, name]} />
+                  {/* El texto de la leyenda va en tinta neutra: la identidad la carga la marca de color de al lado. */}
+                  <Legend wrapperStyle={{ fontSize: 11 }} formatter={(value) => <span style={{ color: "#8B93A0" }}>{value}</span>} />
+                  {exerciseInfo?.unilateral ? (
+                    <>
+                      <Line type="monotone" dataKey={liftMetric === "1rm" ? "1RM Der" : "Derecho"} stroke="#C08A3E" strokeWidth={2.5} dot={{ r: 3 }} connectNulls />
+                      <Line type="monotone" dataKey={liftMetric === "1rm" ? "1RM Izq" : "Izquierdo"} stroke={SERIE_2} strokeWidth={2.5} dot={{ r: 3 }} connectNulls />
+                    </>
+                  ) : (
+                    <Line type="monotone" dataKey={liftMetric === "1rm" ? "1RM" : "Peso"} stroke="#C08A3E" strokeWidth={2.5} dot={{ r: 3 }} connectNulls />
+                  )}
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </>
         )}
       </section>
 
