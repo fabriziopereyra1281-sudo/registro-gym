@@ -11,6 +11,10 @@ import { supabase } from "./supabaseClient.js";
 // ---------------------------------------------------------------------------
 const DAY_ORDER = ["lun", "mar", "mie", "jue", "vie"];
 const DAY_LABELS = { lun: "Lunes", mar: "Martes", mie: "Miércoles", jue: "Jueves", vie: "Viernes" };
+// Los 7 dias reales (DAY_LABELS solo tiene lun-vie, los que tienen rutina en
+// el split) -- se usan para el encabezado, que tiene que poder decir
+// "Domingo" aunque ese dia no tenga una entrada en `config`.
+const WEEKDAY_NAMES = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
 
 function defaultTemplate() {
   return {
@@ -464,12 +468,19 @@ export default function App() {
   const [session, setSession] = useState(undefined); // undefined = cargando, null = sin sesión
   const [tab, setTab] = useState("hoy");
   const [selectedDay, setSelectedDay] = useState(defaultDayKey());
+  const [config, setConfig] = useState(null);
   // El encabezado de arriba (visible en todas las pestañas) siempre muestra
   // el dia real de hoy, sin importar que dia este navegando el usuario en la
   // pestaña Hoy -- son dos cosas distintas: "que dia es hoy" vs "que rutina
-  // estoy mirando ahora".
-  const todayDayKey = defaultDayKey();
-  const [config, setConfig] = useState(null);
+  // estoy mirando ahora". Sabado y domingo no tienen entrada en `config`
+  // (el split es lun-vie), asi que ahi se arma un "dia" sintetico con un
+  // mensaje de descanso en vez de indexar algo que no existe.
+  const todayWeekday = new Date().getDay();
+  const todayDayKey = DAY_KEY_BY_WEEKDAY[todayWeekday] || null;
+  const todayDayName = WEEKDAY_NAMES[todayWeekday];
+  const todayDayInfo = todayDayKey
+    ? config?.[todayDayKey]
+    : { focus: `Descanso — disfrutá del ${todayDayName.toLowerCase()}`, note: "" };
   const [logs, setLogs] = useState([]);
   const [bwLogs, setBwLogs] = useState([]);
   const [activityLogs, setActivityLogs] = useState([]);
@@ -1125,7 +1136,7 @@ export default function App() {
         {(!isOnline || offlineQueue.length > 0) && (
           <OfflineBanner isOnline={isOnline} pendingCount={offlineQueue.length} />
         )}
-        <Header day={config[todayDayKey]} dayName={DAY_LABELS[todayDayKey]} />
+        <Header day={todayDayInfo} dayName={todayDayName} />
 
         <main className="main">
           {tab === "hoy" ? (
