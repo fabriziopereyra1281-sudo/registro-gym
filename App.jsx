@@ -284,6 +284,8 @@ const FOOD_DB = [
   { id: "carne_picada", name: "Carne picada magra", cat: "Proteínas", unit: false, kcal: 210, protein: 26, carbs: 0, fat: 11 },
   { id: "asado", name: "Asado / carne vacuna a la parrilla", cat: "Proteínas", unit: false, kcal: 250, protein: 26, carbs: 0, fat: 16 },
   { id: "cerdo", name: "Bife de cerdo", cat: "Proteínas", unit: false, kcal: 210, protein: 26, carbs: 0, fat: 11 },
+  { id: "matambre_vaca", name: "Matambre de vaca", cat: "Proteínas", unit: false, kcal: 230, protein: 27, carbs: 0, fat: 13 },
+  { id: "matambre_cerdo", name: "Matambre de cerdo", cat: "Proteínas", unit: false, kcal: 270, protein: 20, carbs: 0, fat: 20 },
   { id: "huevo", name: "Huevo entero", cat: "Proteínas", unit: true, unitWord: "unidad", unitWordPlural: "unidades", kcal: 70, protein: 6, carbs: 0.5, fat: 5 },
   { id: "clara_huevo", name: "Clara de huevo", cat: "Proteínas", unit: true, unitWord: "unidad", unitWordPlural: "unidades", kcal: 17, protein: 3.6, carbs: 0.2, fat: 0.1 },
   { id: "atun", name: "Atún al natural", cat: "Proteínas", unit: false, kcal: 116, protein: 26, carbs: 0, fat: 1 },
@@ -369,6 +371,19 @@ const MEAL_COMBOS = {
     { carb: "pan_integral", veg: "verduras_mixtas", title: "Huevos revueltos con pan integral y ensalada", prep: "Huevos revueltos, pan integral tostado, ensalada mixta al costado." },
     { carb: "papa", veg: "espinaca", title: "Tortilla de papa y espinaca", prep: "Tortilla de huevo con papa y espinaca salteada adentro." },
   ],
+  // Matambre (vaca y cerdo) son cortes bastante mas grasos que el resto del
+  // banco -- por eso sus guarniciones son siempre las mas magras (papa,
+  // batata, verduras, sin nada de grasa agregada), dejando que la porcion de
+  // carne sea la unica variable a ajustar segun cuanta grasa del dia quede
+  // (ver remainingFat / suggestedGrams en MealIdeaCard).
+  matambre_vaca: [
+    { carb: "papa", veg: "verduras_mixtas", title: "Matambre de vaca con papas al horno y ensalada", prep: "Matambre a la parrilla o plancha, papas al horno, ensalada mixta." },
+    { carb: "batata", veg: "zapallo_anco", title: "Matambre de vaca con batata y zapallo", prep: "Matambre a la plancha, batata y zapallo al horno." },
+  ],
+  matambre_cerdo: [
+    { carb: "papa", veg: "brocoli", title: "Matambre de cerdo con papas hervidas y brócoli", prep: "Matambre de cerdo a la plancha (sacale el exceso de grasa visible antes de cocinar), papas hervidas, brócoli al vapor." },
+    { carb: "batata", veg: "verduras_mixtas", title: "Matambre de cerdo con batata y ensalada", prep: "Matambre de cerdo a la plancha, batata al horno, ensalada mixta bien fresca para compensar lo graso de la carne." },
+  ],
 };
 
 // Elige una combinacion para la proteina dada. seed cambia el resultado de
@@ -413,6 +428,11 @@ function foodQty(id, qty) {
   return { id, qty };
 }
 const SNACK_COMBOS = {
+  desayuno: [
+    { title: "Huevos revueltos con pan integral", prep: "Huevos revueltos, pan integral tostado — buena proteína para arrancar el día.", items: [foodQty("huevo", 2), foodQty("pan_integral", 2)] },
+    { title: "Yogur griego con avena y almendras", prep: "Yogur griego con avena mezclada y un puñado de almendras encima.", items: [foodQty("yogur_griego", 200), foodQty("avena", 1), foodQty("almendras", 1)] },
+    { title: "Tostadas con queso blanco y huevo duro", prep: "Tostadas con queso blanco descremado untado, huevos duros aparte.", items: [foodQty("pan_integral", 2), foodQty("queso_blanco_0", 4), foodQty("huevo", 2)] },
+  ],
   merienda: [
     { title: "Yogur griego con banana y almendras", prep: "Mezclá el yogur con la banana en rodajas y un puñado de almendras encima.", items: [foodQty("yogur_griego", 200), foodQty("banana", 1), foodQty("almendras", 1)] },
     { title: "Tostadas con queso blanco y manzana", prep: "Tostadas con queso blanco descremado untado, manzana aparte.", items: [foodQty("pan_integral", 2), foodQty("queso_blanco_0", 4), foodQty("manzana", 1)] },
@@ -2768,11 +2788,13 @@ const MEAL_IDEA_PROTEINS = Object.keys(MEAL_COMBOS)
 // Pestañas de tipo de comida: cada una con su propia logica de sugerencia.
 // Almuerzo y Cena comparten el mismo flujo (tildar que proteina tenes -> un
 // plato completo, banco MEAL_COMBOS) -- son ambas "comida principal", solo
-// cambia el momento del dia. Merienda/pre/post muestran directo las 2-3
-// opciones del banco de SNACK_COMBOS, sin paso de seleccion (son listas
-// cortas, mas rapido mostrarlas todas que hacer tildar algo primero).
+// cambia el momento del dia. Desayuno/Merienda/pre/post muestran directo las
+// 2-3 opciones del banco de SNACK_COMBOS, sin paso de seleccion (son listas
+// cortas, mas rapido mostrarlas todas que hacer tildar algo primero) --
+// desayuno aca no suele ser "proteina + guarnicion" sino algo simple.
 const MEAL_IDEA_FULL_MEALS = ["almuerzo", "cena"];
 const MEAL_IDEA_TABS = [
+  { key: "desayuno", label: "Desayuno" },
   { key: "almuerzo", label: "Almuerzo" },
   { key: "cena", label: "Cena" },
   { key: "merienda", label: "Merienda" },
@@ -2780,6 +2802,7 @@ const MEAL_IDEA_TABS = [
   { key: "post_entreno", label: "Post-entreno" },
 ];
 const MEAL_IDEA_TITLES = {
+  desayuno: "¿Qué desayuno hoy?",
   almuerzo: "¿Qué almuerzo hoy?",
   cena: "¿Qué cocino hoy?",
   merienda: "Ideas para la merienda",
@@ -2787,6 +2810,7 @@ const MEAL_IDEA_TITLES = {
   post_entreno: "Después de entrenar",
 };
 const MEAL_IDEA_SUBTITLES = {
+  desayuno: "Opciones fáciles, sin cocinar",
   almuerzo: "Tildá lo que tenés a mano y te tiro una idea concreta",
   cena: "Tildá lo que tenés a mano y te tiro una idea concreta",
   merienda: "Opciones fáciles, sin cocinar",
@@ -2794,10 +2818,12 @@ const MEAL_IDEA_SUBTITLES = {
   post_entreno: "Proteína y carbohidrato para recuperar después del entrenamiento",
 };
 // Al abrir la tarjeta, arranca en la pestaña que tiene mas sentido segun la
-// hora (antes de las 16 todavia no es hora de cena) -- asi no hay que ir a
-// buscar "Almuerzo" a mano al mediodia.
+// hora (antes de las 11 es desayuno, antes de las 16 todavia no es hora de
+// cena) -- asi no hay que ir a buscar la pestaña correcta a mano.
 function defaultMealIdeaType() {
-  return new Date().getHours() < 16 ? "almuerzo" : "cena";
+  const h = new Date().getHours();
+  if (h < 11) return "desayuno";
+  return h < 16 ? "almuerzo" : "cena";
 }
 
 // "Que cocino hoy" / meriendas / pre / post: sin IA, banco curado fijo
@@ -2833,9 +2859,12 @@ function MealIdeaCard({ targets, totals }) {
 
   const remainingKcal = targets?.calories != null ? Math.round(targets.calories - totals.calories) : null;
   const remainingProtein = targets?.protein != null ? Math.round((targets.protein - totals.protein) * 10) / 10 : null;
+  const remainingFat = targets?.fat != null ? Math.round((targets.fat - totals.fat) * 10) / 10 : null;
   const remainingNote = remainingKcal != null && (
     <div className="section-sub" style={{ marginTop: 10, marginBottom: 0 }}>
-      Hoy te quedan {fmtNum(Math.max(0, remainingKcal))} kcal{remainingProtein != null ? ` y ${fmtNum(Math.max(0, remainingProtein))}g de proteína` : ""} para cubrir.
+      Hoy te quedan {fmtNum(Math.max(0, remainingKcal))} kcal
+      {remainingProtein != null ? `, ${fmtNum(Math.max(0, remainingProtein))}g de proteína` : ""}
+      {remainingFat != null ? ` y ${fmtNum(Math.max(0, remainingFat))}g de grasa` : ""} para cubrir.
     </div>
   );
 
@@ -2888,6 +2917,20 @@ function MealIdeaCard({ targets, totals }) {
                         carbFood ? `${fmtNum(MEAL_COMBO_PORTIONS.carb)}g de ${carbFood.name}` : null,
                         vegFood ? `${fmtNum(MEAL_COMBO_PORTIONS.veg)}g de ${vegFood.name}` : null,
                       ].filter(Boolean);
+                      // Si la proteina elegida es grasosa (asado, matambre,
+                      // etc.) y la porcion de referencia (150g) ya se comeria
+                      // toda la grasa que queda en el dia, sugerir una porcion
+                      // mas chica en vez de dejar que se entere recien al
+                      // cargarlo en Nutricion. No toca carb/veg: ya son bajos
+                      // en grasa de por si, la variable es siempre la carne.
+                      let fatSuggestion = null;
+                      if (remainingFat != null && proteinFood && !proteinFood.unit && proteinFood.fat > 0) {
+                        const fatAtDefaultPortion = Number((proteinFood.fat * (MEAL_COMBO_PORTIONS.protein / 100)).toFixed(1));
+                        if (fatAtDefaultPortion > remainingFat && remainingFat > 0) {
+                          const suggestedGrams = Math.max(50, Math.floor((remainingFat / proteinFood.fat) * 100 / 10) * 10);
+                          fatSuggestion = `Te quedan ${fmtNum(Math.max(0, remainingFat))}g de grasa hoy — con esta proteína más grasosa conviene una porción más chica: ~${fmtNum(suggestedGrams)}g de ${proteinFood.name} en vez de 150g.`;
+                        }
+                      }
                       return (
                         <div key={combo.proteinId} className="meal-idea">
                           <div className="hist-ex">{combo.title}</div>
@@ -2896,6 +2939,7 @@ function MealIdeaCard({ targets, totals }) {
                           <div className="hist-detail mono" style={{ marginTop: 4 }}>
                             ≈{fmtNum(m.kcal)} kcal · P {fmtNum(Number(m.protein.toFixed(1)))}g · C {fmtNum(Number(m.carbs.toFixed(1)))}g · G {fmtNum(Number(m.fat.toFixed(1)))}g
                           </div>
+                          {fatSuggestion && <div className="hist-detail accent2" style={{ marginTop: 4 }}>{fatSuggestion}</div>}
                         </div>
                       );
                     })}
