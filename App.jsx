@@ -4048,7 +4048,13 @@ function computeCoach({ bwLogs, logs, activityLogs, checkins, mealLogs, targets,
         tone = "warn";
       }
     } else if (pctWeek < -1) {
-      decision = "Estás bajando más rápido de lo ideal (más de 1%/semana). Subí ~150-200 kcal para frenar la pérdida de masa muscular.";
+      const gap = nutri && caloriesAvg != null && targets?.calories ? Math.round(targets.calories - caloriesAvg) : null;
+      if (gap != null && gap > 150) {
+        const step = Math.min(gap, 400);
+        decision = `Estás bajando más rápido de lo ideal (más de 1%/semana) y además comés ${fmtNum(gap)} kcal por debajo de tu objetivo (${fmtNum(Math.round(caloriesAvg))} vs ${fmtNum(targets.calories)}) — ese déficit es demasiado grande para sostener masa muscular. Subí al menos ~${fmtNum(step)} kcal esta semana y seguí ajustando hasta acercarte al objetivo.`;
+      } else {
+        decision = "Estás bajando más rápido de lo ideal (más de 1%/semana). Subí ~150-200 kcal para frenar la pérdida de masa muscular.";
+      }
       tone = "warn";
     } else {
       decision = "Progreso en línea: peso bajando de forma sostenida" + (entreno && entreno.status !== "down" ? " y entrenamiento estable o en aumento." : ".") + " Mantené el plan actual.";
