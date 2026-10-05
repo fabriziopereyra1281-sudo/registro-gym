@@ -247,6 +247,10 @@ function mapCoachNoteRow(row) {
   if (!row) return null;
   return { id: row.id, weekStart: row.week_start, text: row.text, model: row.model, createdAt: row.created_at };
 }
+function mapDailySuggestionRow(row) {
+  if (!row) return null;
+  return { id: row.id, date: row.date, mealsHash: row.meals_hash, text: row.text, model: row.model, createdAt: row.created_at };
+}
 function mapPhotoRow(row) {
   return {
     id: row.id,
@@ -530,6 +534,8 @@ export default function App() {
   const [supplements, setSupplements] = useState([]);
   const [supplementLogs, setSupplementLogs] = useState([]);
   const [coachNote, setCoachNote] = useState(null);
+  const [dailySuggestion, setDailySuggestion] = useState(null);
+  const [dailySuggestionLoading, setDailySuggestionLoading] = useState(false);
   const [dataLoaded, setDataLoaded] = useState(false);
   const [openForm, setOpenForm] = useState(null);
   const [editMode, setEditMode] = useState(false);
@@ -658,6 +664,7 @@ export default function App() {
         setPhotoUrls({});
         setSupplements([]);
         setSupplementLogs([]);
+        setDailySuggestion(null);
         setDataLoaded(false);
       }
     });
@@ -698,6 +705,11 @@ export default function App() {
     // acá solo se lee la última, nunca se inserta desde el navegador.
     const { data: noteRow } = await supabase
       .from("coach_notes").select("*").eq("user_id", userId).order("week_start", { ascending: false }).limit(1).maybeSingle();
+    // A diferencia de coach_notes, esta sí se puede generar desde el navegador
+    // (ver generateDailySuggestion) -- acá solo se trae la de hoy, si existe,
+    // para no perderla al recargar la página.
+    const { data: dailySuggestionRow } = await supabase
+      .from("daily_suggestions").select("*").eq("user_id", userId).eq("date", todayISO()).maybeSingle();
 
     setConfig(cfg);
     setLogs(mergeOfflineQueue("workout_logs", logRows || [], mapLogRow));
@@ -710,6 +722,7 @@ export default function App() {
     setSupplements((supplementRows || []).map(mapSupplementRow));
     setSupplementLogs((supplementLogRows || []).map(mapSupplementLogRow));
     setCoachNote(mapCoachNoteRow(noteRow));
+    setDailySuggestion(mapDailySuggestionRow(dailySuggestionRow));
     setDataLoaded(true);
   }
 
@@ -929,6 +942,88 @@ export default function App() {
   async function deleteMeal(id) {
     await supabase.from("meal_logs").delete().eq("id", id);
     setMealLogs((prev) => prev.filter((m) => m.id !== id));
+  }
+
+  // Sugerencia del dia con IA (boton "¿Como va mi dia?" en Nutricion). Los
+  // numeros (consumido/restante) los calcula esta funcion, no la IA -- el
+  // endpoint solo redacta un parrafo con criterio sobre lo ya calculado. Si
+  // las comidas de hoy no cambiaron desde la ultima vez que se generó (mismo
+  // mealsHash guardado en daily_suggestions), no vuelve a llamar a la IA:
+  // evita gastar cupo gratis de mas si el usuario toca el boton de nuevo sin
+  // haber cargado nada nuevo.
+  async function generateDailySuggestion(mealsToday, totals, targets) {
+    const today = todayISO();
+    const signatureSource = JSON.stringify(
+      mealsToday
+        .map((m) => [m.id, m.mealType, m.calories, m.protein, m.carbs, m.fat])
+        .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+    );
+    const mealsHash = String(seedFromString(signatureSource));
+
+    if (dailySuggestion && dailySuggestion.date === today && dailySuggestion.mealsHash === mealsHash) {
+      return; // nada cambio desde la ultima vez -- no gastar cupo de IA de nuevo
+    }
+    if (mealsToday.length === 0) {
+      showToast("Cargá al menos una comida hoy para pedir la sugerencia");
+      return;
+    }
+
+    setDailySuggestionLoading(true);
+    try {
+      const summary = {
+        comidas_hoy: mealsToday.map((m) => ({
+          tipo: m.mealType || "Otro",
+          nombre: m.name,
+          calorias: m.calories ?? null,
+          proteina: m.protein ?? null,
+          carbohidratos: m.carbs ?? null,
+          grasa: m.fat ?? null,
+        })),
+        objetivo: {
+          calorias: targets?.calories ?? null,
+          proteina: targets?.protein ?? null,
+          carbohidratos: targets?.carbs ?? null,
+          grasa: targets?.fat ?? null,
+        },
+        consumido: { calorias: totals.calories, proteina: totals.protein, carbohidratos: totals.carbs, grasa: totals.fat },
+        restante: {
+          calorias: targets?.calories != null ? Math.round(targets.calories - totals.calories) : null,
+          proteina: targets?.protein != null ? Math.round((targets.protein - totals.protein) * 10) / 10 : null,
+          carbohidratos: targets?.carbs != null ? Math.round((targets.carbs - totals.carbs) * 10) / 10 : null,
+          grasa: targets?.fat != null ? Math.round((targets.fat - totals.fat) * 10) / 10 : null,
+        },
+      };
+
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
+      if (!accessToken) throw new Error("Sesión no disponible");
+
+      const res = await fetch("/api/daily-suggestion", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ summary }),
+      });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => null);
+        throw new Error(errBody?.error || `HTTP ${res.status}`);
+      }
+      const { text, provider } = await res.json();
+
+      const { data, error } = await supabase
+        .from("daily_suggestions")
+        .upsert(
+          { user_id: session.user.id, date: today, meals_hash: mealsHash, text, model: provider },
+          { onConflict: "user_id,date" }
+        )
+        .select()
+        .single();
+      if (error) throw error;
+      setDailySuggestion(mapDailySuggestionRow(data));
+    } catch (err) {
+      showToast("No se pudo generar la sugerencia: " + (err.message || "error desconocido"));
+    } finally {
+      setDailySuggestionLoading(false);
+    }
   }
 
   async function addPhoto(entry) {
@@ -1240,6 +1335,9 @@ export default function App() {
               logs={logs}
               config={config}
               activityLogs={activityLogs}
+              dailySuggestion={dailySuggestion}
+              dailySuggestionLoading={dailySuggestionLoading}
+              onGenerateDailySuggestion={generateDailySuggestion}
             />
           ) : (
             <CoachTab
@@ -3009,7 +3107,47 @@ function MealIdeaCard({ targets, totals }) {
   );
 }
 
-function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwLogs, logs, config, activityLogs }) {
+// Sugerencia del dia con IA, a demanda (ver generateDailySuggestion en el
+// componente raiz). Separada de MealIdeaCard a proposito: esta mira lo que
+// YA se comio hoy + lo que falta, no sugiere platos nuevos como "¿Que cocino
+// hoy?" -- son dos cosas distintas aunque convivan en la misma pestaña.
+function DailySuggestionCard({ targets, totals, mealsToday, suggestion, loading, onGenerate }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section className="card">
+      <button className="card-head" onClick={() => setOpen(!open)}>
+        <div>
+          <div className="section-title" style={{ marginBottom: 2 }}>¿Cómo va mi día?</div>
+          <div className="section-sub" style={{ marginBottom: 0 }}>Un vistazo con criterio a lo que ya comiste hoy</div>
+        </div>
+        <div className={"card-icon" + (open ? " open" : "")}>{open ? <X size={16} /> : <Plus size={16} />}</div>
+      </button>
+
+      {open && (
+        <div className="card-form">
+          {suggestion ? (
+            <div className="hist-detail" style={{ fontSize: 14, lineHeight: 1.5 }}>{suggestion.text}</div>
+          ) : (
+            <div className="empty small">Todavía no la pediste hoy. Cargá al menos una comida y tocá el botón.</div>
+          )}
+          <button
+            className="cancel-btn"
+            style={{ width: "100%", marginTop: 10 }}
+            disabled={loading}
+            onClick={() => onGenerate(mealsToday, totals, targets)}
+          >
+            {loading ? "Generando..." : suggestion ? "Actualizar" : "Generar sugerencia"}
+          </button>
+          <div className="section-sub" style={{ marginTop: 8, marginBottom: 0 }}>
+            Si no cargaste comidas nuevas desde la última vez, no vuelve a gastar cupo de IA — te muestra la misma.
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwLogs, logs, config, activityLogs, dailySuggestion, dailySuggestionLoading, onGenerateDailySuggestion }) {
   // Que dia se esta viendo/cargando: por defecto hoy, pero se puede mover a
   // cualquier dia anterior (ej. para cargar una cena de madrugada que quedo
   // sin registrar, o completar comidas de ayer). Nunca se permite ir a futuro.
@@ -3088,6 +3226,17 @@ function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwL
       <DayVerdictCard verdict={dayVerdict} onPickFood={setSuggestFoodId} />
 
       <MealIdeaCard targets={effectiveTargets} totals={totals} />
+
+      {isToday && (
+        <DailySuggestionCard
+          targets={effectiveTargets}
+          totals={totals}
+          mealsToday={selectedMeals}
+          suggestion={dailySuggestion}
+          loading={dailySuggestionLoading}
+          onGenerate={onGenerateDailySuggestion}
+        />
+      )}
 
       <GoalCard
         targets={targets}
