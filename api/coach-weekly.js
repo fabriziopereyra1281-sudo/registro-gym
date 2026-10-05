@@ -2,10 +2,23 @@
 // cron externo gratuito (ver instrucciones en el PR) una vez por semana, vía
 // HTTP GET con una clave secreta. Por cada usuario: junta los últimos 14 días
 // desde Supabase, arma el mismo resumen que ya calcula computeCoach() en
-// App.jsx, le pide a Claude una lectura con criterio en vez de solo "subió/
-// bajó", y la guarda en coach_notes para que la app la muestre. Si
+// App.jsx, le pide a una IA gratuita una lectura con criterio en vez de solo
+// "subió/bajó", y la guarda en coach_notes para que la app la muestre. Si
 // TELEGRAM_BOT_TOKEN y TELEGRAM_CHAT_ID están configurados, también la manda
 // por Telegram — si no están, no hace nada ahí (opcional).
+//
+// Proveedor de IA: Gemini como principal, GLM (Zhipu/z.ai) como respaldo si
+// Gemini falla o se quedó sin cupo gratis ese día (ver generateNote más
+// abajo) — las dos tienen capa gratuita real. Si en el futuro se prefiere
+// volver a pagar por Claude u otro proveedor, alcanza con agregar una función
+// callX() con la misma forma (recibe systemPrompt/userPrompt, devuelve texto
+// o tira error) y sumarla a la cadena de generateNote().
+//
+// Aviso: los nombres de modelo gratuitos y sus límites cambian seguido en
+// ambos proveedores. GEMINI_MODEL y ZAI_MODEL son variables de entorno
+// justamente para poder ajustarlos sin tocar código si el que viene por
+// default deja de ser gratis — confirmá el estado actual en Google AI Studio
+// y en el panel de z.ai antes de depender de esto a largo plazo.
 //
 // Vercel detecta sola cualquier archivo bajo /api como funcion serverless,
 // accesible en /api/coach-weekly — no hace falta declararla en ningun lado.
@@ -15,8 +28,9 @@
 // este entorno. El cron vive afuera, apuntando a esta URL.
 //
 // Por que pide clave: sin ella, cualquiera que encuentre la URL podria
-// disparar llamadas a la IA a tu costa. Sin COACH_CRON_SECRET configurada,
-// la funcion se niega a correr (ver chequeo mas abajo).
+// disparar llamadas a la IA a tu costa (aunque sea gratis, sigue consumiendo
+// tu cupo). Sin COACH_CRON_SECRET configurada, la funcion se niega a correr
+// (ver chequeo mas abajo).
 //
 // Variables de entorno que necesita (Vercel → Project Settings → Environment Variables):
 //   SUPABASE_SERVICE_ROLE_KEY  (obligatoria — NUNCA la anon key; esta sí
@@ -24,14 +38,19 @@
 //     navegador, solo acá)
 //   SUPABASE_URL               (si no está, usa VITE_SUPABASE_URL — ya la
 //     tenés configurada, no hace falta duplicarla)
-//   ANTHROPIC_API_KEY          (obligatoria)
-//   ANTHROPIC_MODEL            (opcional — por defecto claude-opus-5-5)
+//   GEMINI_API_KEY             (clave gratuita de Google AI Studio —
+//     aistudio.google.com/apikey. Al menos una de GEMINI_API_KEY/ZAI_API_KEY
+//     tiene que estar cargada)
+//   GEMINI_MODEL               (opcional — por defecto gemini-flash-latest)
+//   ZAI_API_KEY                (clave gratuita de z.ai — usada como respaldo
+//     si falla Gemini, o como única IA si no cargás GEMINI_API_KEY)
+//   ZAI_MODEL                  (opcional — por defecto glm-4.5-flash)
 //   COACH_CRON_SECRET          (obligatoria — clave que vos inventás; el
 //     cron externo la manda como ?key=... en la URL)
 //   TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID  (opcionales, los dos juntos)
 
 import { createClient } from "@supabase/supabase-js";
-import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenAI } from "@google/genai";
 
 // ---------------------------------------------------------------------------
 // Helpers de fecha — mismo criterio que App.jsx (ventanas en UTC: a nivel
@@ -143,7 +162,70 @@ Reglas:
 - Cerrá siempre con UNA sola prioridad concreta para la semana que arranca, en una frase.
 - No repitas el formato "esto subió, esto bajó" tal cual — eso ya lo ve en la app arriba de tu nota. Dale una lectura con criterio: qué es lo que importa de verdad esta semana y por qué.`;
 
-async function writeWeeklyNote({ supabase, anthropic, model, userId }) {
+// Google Gemini (gratis con limite diario). Lanza si falla la llamada o si
+// no hay texto en la respuesta -- generateNote() decide que hacer con eso.
+async function callGemini({ apiKey, model, systemPrompt, userPrompt }) {
+  const ai = new GoogleGenAI({ apiKey });
+  const response = await ai.models.generateContent({
+    model,
+    contents: userPrompt,
+    config: { systemInstruction: systemPrompt },
+  });
+  const text = response.text?.trim();
+  if (!text) throw new Error("Gemini: respuesta sin texto");
+  return text;
+}
+
+// GLM (Zhipu / z.ai), capa gratuita. API compatible con el formato de
+// OpenAI (chat completions) -- no tiene SDK propio en npm digno de sumar
+// como dependencia solo por esto, asi que es un fetch directo.
+async function callGLM({ apiKey, model, systemPrompt, userPrompt }) {
+  const res = await fetch("https://api.z.ai/api/paas/v4/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model,
+      max_tokens: 700,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+    }),
+  });
+  if (!res.ok) throw new Error(`GLM: HTTP ${res.status} ${await res.text()}`);
+  const data = await res.json();
+  const text = data.choices?.[0]?.message?.content?.trim();
+  if (!text) throw new Error("GLM: respuesta sin texto");
+  return text;
+}
+
+// Intenta Gemini primero; si falla (cupo gratis agotado, error de red, clave
+// mal puesta) cae a GLM como respaldo. Si falta la clave de alguno de los
+// dos directamente lo salta, sin contarlo como un fallo. Devuelve de que
+// proveedor/modelo salio la nota para guardarlo junto al texto -- util para
+// ver en coach_notes cual esta respondiendo en la practica.
+async function generateNote({ geminiKey, geminiModel, zaiKey, zaiModel, systemPrompt, userPrompt }) {
+  const errors = [];
+  if (geminiKey) {
+    try {
+      const text = await callGemini({ apiKey: geminiKey, model: geminiModel, systemPrompt, userPrompt });
+      return { text, provider: `gemini:${geminiModel}` };
+    } catch (err) {
+      errors.push(`Gemini: ${err.message}`);
+    }
+  }
+  if (zaiKey) {
+    try {
+      const text = await callGLM({ apiKey: zaiKey, model: zaiModel, systemPrompt, userPrompt });
+      return { text, provider: `zai:${zaiModel}` };
+    } catch (err) {
+      errors.push(`GLM: ${err.message}`);
+    }
+  }
+  throw new Error(`Ningun proveedor de IA respondio. ${errors.join(" | ") || "No hay ninguna clave configurada (GEMINI_API_KEY / ZAI_API_KEY)."}`);
+}
+
+async function writeWeeklyNote({ supabase, geminiKey, geminiModel, zaiKey, zaiModel, userId }) {
   const from = daysAgoISO(13);
 
   const [bw, logs, activity, checkins, meals, targetsRes, supplements, supplementLogs] = await Promise.all([
@@ -171,23 +253,14 @@ async function writeWeeklyNote({ supabase, anthropic, model, userId }) {
   // Sin nada cargado esta ventana no tiene sentido gastar en una nota vacia.
   if (!hasAnyRealData(summary)) return { skipped: "sin_datos" };
 
-  const response = await anthropic.messages.create({
-    model,
-    max_tokens: 700,
-    output_config: { effort: "low" }, // tarea simple y acotada: no hace falta mas
-    system: SYSTEM_PROMPT,
-    messages: [
-      { role: "user", content: `Resumen de la semana (últimos 7 días vs. los 7 anteriores):\n\n${JSON.stringify(summary, null, 2)}` },
-    ],
-  });
-
-  const text = response.content.find((b) => b.type === "text")?.text?.trim();
+  const userPrompt = `Resumen de la semana (últimos 7 días vs. los 7 anteriores):\n\n${JSON.stringify(summary, null, 2)}`;
+  const { text, provider } = await generateNote({ geminiKey, geminiModel, zaiKey, zaiModel, systemPrompt: SYSTEM_PROMPT, userPrompt });
   if (!text) return { skipped: "sin_respuesta" };
 
   const { error } = await supabase
     .from("coach_notes")
     .upsert(
-      { user_id: userId, week_start: weekStartISO(), text, model, tone: "ai" },
+      { user_id: userId, week_start: weekStartISO(), text, model: provider, tone: "ai" },
       { onConflict: "user_id,week_start" }
     );
   if (error) throw new Error(`Supabase upsert: ${error.message}`);
@@ -224,19 +297,23 @@ export default async function handler(req, res) {
 
   const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
-  const model = process.env.ANTHROPIC_MODEL || "claude-opus-5-5";
+  const geminiKey = process.env.GEMINI_API_KEY;
+  const geminiModel = process.env.GEMINI_MODEL || "gemini-flash-latest";
+  const zaiKey = process.env.ZAI_API_KEY;
+  const zaiModel = process.env.ZAI_MODEL || "glm-4.5-flash";
 
-  if (!supabaseUrl || !serviceKey || !anthropicKey) {
-    console.error(
-      "Coach semanal: faltan variables de entorno (SUPABASE_URL/VITE_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, ANTHROPIC_API_KEY)."
-    );
+  if (!supabaseUrl || !serviceKey) {
+    console.error("Coach semanal: faltan variables de entorno (SUPABASE_URL/VITE_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY).");
     res.status(500).send("Faltan variables de entorno.");
+    return;
+  }
+  if (!geminiKey && !zaiKey) {
+    console.error("Coach semanal: falta al menos una clave de IA (GEMINI_API_KEY o ZAI_API_KEY).");
+    res.status(500).send("Falta configurar un proveedor de IA (GEMINI_API_KEY o ZAI_API_KEY).");
     return;
   }
 
   const supabase = createClient(supabaseUrl, serviceKey);
-  const anthropic = new Anthropic({ apiKey: anthropicKey });
 
   const { data: usersPage, error: usersError } = await supabase.auth.admin.listUsers();
   if (usersError) {
@@ -248,7 +325,7 @@ export default async function handler(req, res) {
   const results = [];
   for (const user of usersPage.users) {
     try {
-      const result = await writeWeeklyNote({ supabase, anthropic, model, userId: user.id });
+      const result = await writeWeeklyNote({ supabase, geminiKey, geminiModel, zaiKey, zaiModel, userId: user.id });
       results.push({ userId: user.id, ...result });
       if (!result.skipped) await notifyTelegram(result.text);
     } catch (err) {
