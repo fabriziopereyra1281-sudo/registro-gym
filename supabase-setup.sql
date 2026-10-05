@@ -244,3 +244,28 @@ alter table coach_notes enable row level security;
 drop policy if exists "own_coach_notes" on coach_notes;
 create policy "own_coach_notes" on coach_notes
   for select using (auth.uid() = user_id);
+
+-- Sugerencia del dia generada por IA a demanda (boton "¿Como va mi dia?" en
+-- Nutricion, ver /api/daily-suggestion.js) -- a diferencia de coach_notes,
+-- esta la escribe el propio navegador del usuario con su clave anonima (no
+-- hay cron ni service role de por medio), por eso la policy permite
+-- insert/update ademas de select. meals_hash guarda un hash de las comidas
+-- de hoy usadas para generarla, asi la app sabe si hay que volver a llamar
+-- a la IA o si alcanza con mostrar lo ya guardado (no gastar cupo gratis de
+-- mas si no cambio nada desde la ultima vez). Una fila por usuario y dia.
+create table if not exists daily_suggestions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users not null,
+  date date not null,
+  meals_hash text not null,
+  text text not null,
+  model text,
+  created_at timestamptz default now(),
+  unique (user_id, date)
+);
+
+alter table daily_suggestions enable row level security;
+
+drop policy if exists "own_daily_suggestions" on daily_suggestions;
+create policy "own_daily_suggestions" on daily_suggestions
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
