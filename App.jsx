@@ -2945,11 +2945,19 @@ function defaultMealIdeaType() {
 // "Que cocino hoy" / meriendas / pre / post: sin IA, banco curado fijo
 // (MEAL_COMBOS y SNACK_COMBOS). En Cena la sugerencia rota por fecha asi no
 // es siempre la misma, y "Otra idea" fuerza otra opcion para la misma
-// seleccion. No registra nada en Nutricion -- es solo una idea, cargarla
-// despues en "Nueva comida" es una accion aparte y deliberada.
-function MealIdeaCard({ targets, totals }) {
+// seleccion. "Cargar esta comida" la registra en Nutricion tal cual se
+// muestra (porciones de referencia) -- cargarla distinto (ajustando a ojo)
+// sigue siendo una accion aparte en "Nueva comida", para quien prefiera eso.
+function MealIdeaCard({ targets, totals, addMeal, dateISO }) {
   const [open, setOpen] = useState(false);
   const [mealType, setMealType] = useState(defaultMealIdeaType);
+  // Nombre de comida con el que se carga en Nutricion si se toca "Cargar
+  // esta comida" -- mismas etiquetas que ya usa "Nueva comida" (MEAL_TYPES),
+  // asi la idea entra como cualquier otra comida cargada a mano.
+  const mealTypeLabel = MEAL_IDEA_TABS.find((t) => t.key === mealType)?.label || "Otro";
+  function logIdea(title, macros) {
+    addMeal({ date: dateISO, mealType: mealTypeLabel, name: title, calories: macros.kcal, protein: macros.protein, carbs: macros.carbs, fat: macros.fat });
+  }
   // Un almuerzo con pollo no tiene por que ser el mismo plato que una cena
   // con pollo -- cada comida principal guarda su propia seleccion, asi
   // cambiar de pestaña no pisa lo que ya habias tildado en la otra.
@@ -3065,6 +3073,9 @@ function MealIdeaCard({ targets, totals }) {
                             ≈{fmtNum(m.kcal)} kcal · P {fmtNum(Number(m.protein.toFixed(1)))}g · C {fmtNum(Number(m.carbs.toFixed(1)))}g · G {fmtNum(Number(m.fat.toFixed(1)))}g
                           </div>
                           {fatSuggestion && <div className="hist-detail accent2" style={{ marginTop: 4 }}>{fatSuggestion}</div>}
+                          <button className="cancel-btn" style={{ width: "100%", marginTop: 8 }} onClick={() => logIdea(combo.title, m)}>
+                            Cargar esta comida
+                          </button>
                         </div>
                       );
                     })}
@@ -3090,6 +3101,9 @@ function MealIdeaCard({ targets, totals }) {
                       <div className="hist-detail mono" style={{ marginTop: 4 }}>
                         ≈{fmtNum(m.kcal)} kcal · P {fmtNum(Number(m.protein.toFixed(1)))}g · C {fmtNum(Number(m.carbs.toFixed(1)))}g · G {fmtNum(Number(m.fat.toFixed(1)))}g
                       </div>
+                      <button className="cancel-btn" style={{ width: "100%", marginTop: 8 }} onClick={() => logIdea(snackCombo.title, m)}>
+                        Cargar esta comida
+                      </button>
                     </div>
                   );
                 })()}
@@ -3111,8 +3125,17 @@ function MealIdeaCard({ targets, totals }) {
 // componente raiz). Separada de MealIdeaCard a proposito: esta mira lo que
 // YA se comio hoy + lo que falta, no sugiere platos nuevos como "¿Que cocino
 // hoy?" -- son dos cosas distintas aunque convivan en la misma pestaña.
-function DailySuggestionCard({ targets, totals, mealsToday, suggestion, loading, onGenerate }) {
+function DailySuggestionCard({ targets, totals, mealsToday, suggestion, loading, onGenerate, addMeal, dateISO }) {
   const [open, setOpen] = useState(false);
+  // Opcion concreta (alimento + cantidad) para cubrir lo que falta de
+  // proteina, calculada por codigo -- no espera a la IA ni depende de ella,
+  // mismo motor que ya usa la tarjeta "Te falta..." (DayVerdictCard). Asi
+  // hay algo para cargar ya mismo, y el parrafo de la IA queda como
+  // contexto encima, no como unico contenido de la tarjeta.
+  const [suggestFoodId, setSuggestFoodId] = useState(null);
+  const remainingProtein = targets?.protein != null ? Math.round((targets.protein - totals.protein) * 10) / 10 : null;
+  const proteinFood = remainingProtein != null ? suggestFoodForProtein(remainingProtein, suggestFoodId) : null;
+
   return (
     <section className="card">
       <button className="card-head" onClick={() => setOpen(!open)}>
@@ -3125,10 +3148,38 @@ function DailySuggestionCard({ targets, totals, mealsToday, suggestion, loading,
 
       {open && (
         <div className="card-form">
+          {proteinFood && (
+            <div className="meal-idea">
+              <div className="hist-detail" style={{ marginTop: 0 }}>
+                Con {proteinFood.label} (~{fmtNum(proteinFood.kcal)} kcal, {fmtNum(proteinFood.protein)}g proteína) {proteinFood.capped ? "cubrís una parte de lo que falta." : "cubrís la proteína que falta."}
+              </div>
+              <div className="verdict-food-picker" style={{ marginTop: 6 }}>
+                <span>¿Tenés otra cosa a mano?</span>
+                <div className="select-wrap select-wrap-sm">
+                  <select className="select" value={proteinFood.foodId} onChange={(e) => setSuggestFoodId(e.target.value)}>
+                    {PROTEIN_FOODS.map((f) => (
+                      <option key={f.id} value={f.id}>{f.name}</option>
+                    ))}
+                  </select>
+                  <ChevronDown size={14} className="select-chevron" />
+                </div>
+              </div>
+              <button
+                className="cancel-btn"
+                style={{ width: "100%", marginTop: 8 }}
+                onClick={() =>
+                  addMeal({ date: dateISO, mealType: "Otro", name: proteinFood.label, calories: proteinFood.kcal, protein: proteinFood.protein, carbs: proteinFood.carbs, fat: proteinFood.fat })
+                }
+              >
+                Cargar esta comida
+              </button>
+            </div>
+          )}
+
           {suggestion ? (
-            <div className="hist-detail" style={{ fontSize: 14, lineHeight: 1.5 }}>{suggestion.text}</div>
+            <div className="hist-detail" style={{ fontSize: 14, lineHeight: 1.5, marginTop: proteinFood ? 10 : 0 }}>{suggestion.text}</div>
           ) : (
-            <div className="empty small">Todavía no la pediste hoy. Cargá al menos una comida y tocá el botón.</div>
+            <div className="empty small" style={{ marginTop: proteinFood ? 10 : 0 }}>Todavía no pediste la lectura de la IA. Tocá el botón para una opinión con más contexto.</div>
           )}
           <button
             className="cancel-btn"
@@ -3136,7 +3187,7 @@ function DailySuggestionCard({ targets, totals, mealsToday, suggestion, loading,
             disabled={loading}
             onClick={() => onGenerate(mealsToday, totals, targets)}
           >
-            {loading ? "Generando..." : suggestion ? "Actualizar" : "Generar sugerencia"}
+            {loading ? "Generando..." : suggestion ? "Actualizar lectura de IA" : "Generar lectura de IA"}
           </button>
           <div className="section-sub" style={{ marginTop: 8, marginBottom: 0 }}>
             Si no cargaste comidas nuevas desde la última vez, no vuelve a gastar cupo de IA — te muestra la misma.
@@ -3223,9 +3274,15 @@ function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwL
     <div className="tabpane">
       <TargetsCard targets={targets} onSave={saveTargets} latestWeight={latestWeight} />
 
-      <DayVerdictCard verdict={dayVerdict} onPickFood={setSuggestFoodId} />
+      <DayVerdictCard
+        verdict={dayVerdict}
+        onPickFood={setSuggestFoodId}
+        onLogFood={(food) =>
+          addMeal({ date: selectedDate, mealType: "Otro", name: food.label, calories: food.kcal, protein: food.protein, carbs: food.carbs, fat: food.fat })
+        }
+      />
 
-      <MealIdeaCard targets={effectiveTargets} totals={totals} />
+      <MealIdeaCard targets={effectiveTargets} totals={totals} addMeal={addMeal} dateISO={selectedDate} />
 
       {isToday && (
         <DailySuggestionCard
@@ -3235,6 +3292,8 @@ function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwL
           suggestion={dailySuggestion}
           loading={dailySuggestionLoading}
           onGenerate={onGenerateDailySuggestion}
+          addMeal={addMeal}
+          dateISO={selectedDate}
         />
       )}
 
@@ -3335,11 +3394,16 @@ function computeFoodQtyForProtein(foodId, remainingProtein) {
   const factor = food.unit ? qty : qty / 100;
   const kcal = Math.round(food.kcal * factor);
   const protein = Number((food.protein * factor).toFixed(1));
+  // carbs/fat se suman para poder cargar esto directo como una comida (ver
+  // "Cargar esta comida" en DayVerdictCard/DailySuggestionCard) sin tener
+  // que volver a tipearlo en "Nueva comida".
+  const carbs = Number((food.carbs * factor).toFixed(1));
+  const fat = Number((food.fat * factor).toFixed(1));
   const label = food.unit
     ? `${fmtNum(qty)} ${qty === 1 ? food.unitWord : food.unitWordPlural} de ${food.name}`
     : `${fmtNum(qty)} g de ${food.name}`;
 
-  return { foodId: food.id, label, kcal, protein, capped };
+  return { foodId: food.id, label, kcal, protein, carbs, fat, capped };
 }
 
 // Si no se eligio un alimento puntual, busca en FOOD_DB el mas eficiente
@@ -3484,27 +3548,32 @@ function computeDayVerdict({ totals, targets, logs, config, suggestFoodId, dateI
 
 const PROTEIN_FOODS = FOOD_DB.filter((f) => f.cat === "Proteínas");
 
-function DayVerdictCard({ verdict, onPickFood }) {
+function DayVerdictCard({ verdict, onPickFood, onLogFood }) {
   return (
     <section className={"card verdict-card verdict-" + verdict.tone}>
       <div className="verdict-text">{verdict.text}</div>
       {verdict.suggestion && <div className="verdict-suggestion">{verdict.suggestion}</div>}
       {verdict.proteinGapFood && (
-        <div className="verdict-food-picker">
-          <span>¿Tenés otra cosa a mano?</span>
-          <div className="select-wrap select-wrap-sm">
-            <select
-              className="select"
-              value={verdict.proteinGapFood.foodId}
-              onChange={(e) => onPickFood(e.target.value)}
-            >
-              {PROTEIN_FOODS.map((f) => (
-                <option key={f.id} value={f.id}>{f.name}</option>
-              ))}
-            </select>
-            <ChevronDown size={14} className="select-chevron" />
+        <>
+          <div className="verdict-food-picker">
+            <span>¿Tenés otra cosa a mano?</span>
+            <div className="select-wrap select-wrap-sm">
+              <select
+                className="select"
+                value={verdict.proteinGapFood.foodId}
+                onChange={(e) => onPickFood(e.target.value)}
+              >
+                {PROTEIN_FOODS.map((f) => (
+                  <option key={f.id} value={f.id}>{f.name}</option>
+                ))}
+              </select>
+              <ChevronDown size={14} className="select-chevron" />
+            </div>
           </div>
-        </div>
+          <button className="cancel-btn" style={{ width: "100%", marginTop: 8 }} onClick={() => onLogFood(verdict.proteinGapFood)}>
+            Cargar esta comida
+          </button>
+        </>
       )}
     </section>
   );
