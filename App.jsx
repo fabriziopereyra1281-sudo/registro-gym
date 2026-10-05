@@ -432,6 +432,8 @@ const SNACK_COMBOS = {
     { title: "Huevos revueltos con pan integral", prep: "Huevos revueltos, pan integral tostado — buena proteína para arrancar el día.", items: [foodQty("huevo", 2), foodQty("pan_integral", 2)] },
     { title: "Yogur griego con avena y almendras", prep: "Yogur griego con avena mezclada y un puñado de almendras encima.", items: [foodQty("yogur_griego", 200), foodQty("avena", 1), foodQty("almendras", 1)] },
     { title: "Tostadas con queso blanco y huevo duro", prep: "Tostadas con queso blanco descremado untado, huevos duros aparte.", items: [foodQty("pan_integral", 2), foodQty("queso_blanco_0", 4), foodQty("huevo", 2)] },
+    { title: "Tostadas con palta y huevo", prep: "Tostadas con palta pisada, huevo aparte (revuelto o duro).", items: [foodQty("pan_integral", 2), foodQty("palta", 1), foodQty("huevo", 1)] },
+    { title: "Avena con manzana y manteca de maní", prep: "Avena con manzana en trocitos y una cucharada de manteca de maní mezclada.", items: [foodQty("avena", 1), foodQty("manzana", 1), foodQty("mani", 1)] },
   ],
   merienda: [
     { title: "Yogur griego con banana y almendras", prep: "Mezclá el yogur con la banana en rodajas y un puñado de almendras encima.", items: [foodQty("yogur_griego", 200), foodQty("banana", 1), foodQty("almendras", 1)] },
@@ -2804,14 +2806,11 @@ const MEAL_IDEA_PROTEINS = Object.keys(MEAL_COMBOS)
 // Pestañas de tipo de comida: cada una con su propia logica de sugerencia.
 // Almuerzo y Cena comparten el mismo flujo (tildar que proteina tenes -> un
 // plato completo, banco MEAL_COMBOS) -- son ambas "comida principal", solo
-// cambia el momento del dia. Desayuno/Merienda/pre/post muestran directo las
-// 2-3 opciones del banco de SNACK_COMBOS, sin paso de seleccion (son listas
-// cortas, mas rapido mostrarlas todas que hacer tildar algo primero) --
-// desayuno aca no suele ser "proteina + guarnicion" sino algo simple.
+// cambia el momento del dia. Desayuno/Merienda/pre/post van directo al banco
+// de SNACK_COMBOS, sin paso de seleccion (son ideas cortas, no "proteina +
+// guarnicion") -- muestran una idea por vez con el boton "Otra idea" para
+// rotar, igual que Almuerzo/Cena.
 const MEAL_IDEA_FULL_MEALS = ["almuerzo", "cena"];
-// De las pestañas simples (banco SNACK_COMBOS), estas tres rotan una idea
-// por vez con el boton "Otra idea" en vez de mostrar todo el banco junto.
-const SNACK_IDEA_CYCLE = ["merienda", "pre_entreno", "post_entreno"];
 const MEAL_IDEA_TABS = [
   { key: "desayuno", label: "Desayuno" },
   { key: "almuerzo", label: "Almuerzo" },
@@ -2876,12 +2875,11 @@ function MealIdeaCard({ targets, totals }) {
     return selected.map((proteinId) => pickMealCombo(proteinId, seedFromString(today + mealType + proteinId) + cycleSeed)).filter(Boolean);
   }, [selected, cycleSeed, mealType]);
 
-  // Merienda/pre/post-entreno muestran una sola idea por vez (no las 2-3 a
-  // la vez como antes) para poder rotar con "Otra idea", igual que Almuerzo
-  // y Cena. Desayuno queda mostrando todas las opciones juntas -- no se pidio
-  // el mismo cambio ahi y con 3 opciones fijas alcanza.
+  // Desayuno/merienda/pre/post-entreno muestran una sola idea por vez (no
+  // todas las opciones juntas) para poder rotar con "Otra idea", igual que
+  // Almuerzo y Cena.
   const snackCombo = useMemo(() => {
-    if (!SNACK_IDEA_CYCLE.includes(mealType)) return null;
+    if (MEAL_IDEA_FULL_MEALS.includes(mealType)) return null;
     const today = todayISO();
     return pickSnackCombo(mealType, seedFromString(today + mealType) + cycleSeed);
   }, [mealType, cycleSeed]);
@@ -2981,7 +2979,7 @@ function MealIdeaCard({ targets, totals }) {
                 </>
               )}
             </>
-          ) : SNACK_IDEA_CYCLE.includes(mealType) ? (
+          ) : (
             <>
               <div className="cardlist" style={{ marginTop: 10 }}>
                 {snackCombo && (() => {
@@ -3002,26 +3000,6 @@ function MealIdeaCard({ targets, totals }) {
               <button className="cancel-btn" style={{ width: "100%", marginTop: 8 }} onClick={() => setCycleSeedByMeal((prev) => ({ ...prev, [mealType]: (prev[mealType] || 0) + 1 }))}>
                 Otra idea
               </button>
-              {remainingNote}
-            </>
-          ) : (
-            <>
-              <div className="cardlist" style={{ marginTop: 10 }}>
-                {SNACK_COMBOS[mealType].map((combo, i) => {
-                  const m = computeItemsMacros(combo.items);
-                  return (
-                    <div key={i} className="meal-idea">
-                      <div className="hist-ex">{combo.title}</div>
-                      <div className="hist-detail" style={{ marginTop: 2 }}>{combo.prep}</div>
-                      <div className="hist-detail" style={{ marginTop: 6 }}>{itemsLabel(combo.items)}</div>
-                      <div className="hist-detail mono" style={{ marginTop: 4 }}>
-                        ≈{fmtNum(m.kcal)} kcal · P {fmtNum(Number(m.protein.toFixed(1)))}g · C {fmtNum(Number(m.carbs.toFixed(1)))}g · G {fmtNum(Number(m.fat.toFixed(1)))}g
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="section-sub" style={{ marginTop: 8 }}>Cantidades de referencia — ajustá a ojo.</div>
               {remainingNote}
             </>
           )}
