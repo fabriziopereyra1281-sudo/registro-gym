@@ -437,18 +437,34 @@ const SNACK_COMBOS = {
     { title: "Yogur griego con banana y almendras", prep: "Mezclá el yogur con la banana en rodajas y un puñado de almendras encima.", items: [foodQty("yogur_griego", 200), foodQty("banana", 1), foodQty("almendras", 1)] },
     { title: "Tostadas con queso blanco y manzana", prep: "Tostadas con queso blanco descremado untado, manzana aparte.", items: [foodQty("pan_integral", 2), foodQty("queso_blanco_0", 4), foodQty("manzana", 1)] },
     { title: "Huevo duro con pan y fruta", prep: "Huevos duros, pan lactal, banana.", items: [foodQty("huevo", 2), foodQty("pan_lactal", 2), foodQty("banana", 1)] },
+    { title: "Queso cottage con galletas de arroz y manzana", prep: "Queso cottage con galletas de arroz, manzana aparte.", items: [foodQty("queso_cottage", 150), foodQty("galleta_arroz", 3), foodQty("manzana", 1)] },
+    { title: "Batido de whey con manzana", prep: "Licuado rápido de whey con agua o leche, manzana aparte — opción sin cocinar.", items: [foodQty("whey", 1), foodQty("manzana", 1)] },
   ],
   pre_entreno: [
     { title: "Banana con un scoop de whey", prep: "Licuado rápido o banana + batido de whey, 30-45 min antes de entrenar: carbohidrato rápido + proteína de absorción rápida, bajo en grasa para que no te pese.", items: [foodQty("banana", 1), foodQty("whey", 1)] },
     { title: "Tostadas con banana", prep: "Pan lactal con banana en rodajas — carbohidrato simple, liviano, ideal si entrenás pronto.", items: [foodQty("pan_lactal", 2), foodQty("banana", 1)] },
     { title: "Avena con banana", prep: "Avena con banana — un poco más de fibra, mejor si falta 60-90 min para entrenar (no inmediatamente antes).", items: [foodQty("avena", 1), foodQty("banana", 1)] },
+    { title: "Galletas de arroz con banana", prep: "Carbohidrato bien liviano y rápido de digerir, ideal si falta poco para entrenar.", items: [foodQty("galleta_arroz", 3), foodQty("banana", 1)] },
+    { title: "Manzana con un scoop de whey", prep: "Manzana con batido de whey — misma idea que banana + whey, para variar la fruta.", items: [foodQty("manzana", 1), foodQty("whey", 1)] },
   ],
   post_entreno: [
     { title: "Whey con banana", prep: "Batido de whey con banana apenas terminás — repone glucógeno y manda proteína rápido al músculo.", items: [foodQty("whey", 1), foodQty("banana", 1)] },
     { title: "Atún con arroz", prep: "Atún al natural con arroz blanco — comida real, alta en proteína, buen carbohidrato para reponer.", items: [foodQty("atun", 100), foodQty("arroz", 150)] },
     { title: "Yogur griego con avena y banana", prep: "Yogur griego con avena y banana — proteína y carbohidrato de recuperación, fácil de preparar.", items: [foodQty("yogur_griego", 200), foodQty("avena", 1), foodQty("banana", 1)] },
+    { title: "Pollo con papa", prep: "Pechuga de pollo con papa — comida real post-entreno, buena proteína y carbohidrato para reponer.", items: [foodQty("pollo", 150), foodQty("papa", 200)] },
+    { title: "Queso cottage con banana y avena", prep: "Queso cottage con banana y avena mezclada — proteína y carbohidrato de recuperación, sin cocinar.", items: [foodQty("queso_cottage", 150), foodQty("banana", 1), foodQty("avena", 1)] },
   ],
 };
+
+// Elige una opcion del banco de meriendas/pre/post para la pestaña dada --
+// mismo criterio de pickMealCombo (seed estable por fecha + "cycleSeed" que
+// suma 1 cada vez que se toca "Otra idea").
+function pickSnackCombo(mealType, seed) {
+  const options = SNACK_COMBOS[mealType];
+  if (!options || options.length === 0) return null;
+  const idx = Math.abs(seed) % options.length;
+  return options[idx];
+}
 
 function computeItemsMacros(items) {
   return items.reduce(
@@ -2793,6 +2809,9 @@ const MEAL_IDEA_PROTEINS = Object.keys(MEAL_COMBOS)
 // cortas, mas rapido mostrarlas todas que hacer tildar algo primero) --
 // desayuno aca no suele ser "proteina + guarnicion" sino algo simple.
 const MEAL_IDEA_FULL_MEALS = ["almuerzo", "cena"];
+// De las pestañas simples (banco SNACK_COMBOS), estas tres rotan una idea
+// por vez con el boton "Otra idea" en vez de mostrar todo el banco junto.
+const SNACK_IDEA_CYCLE = ["merienda", "pre_entreno", "post_entreno"];
 const MEAL_IDEA_TABS = [
   { key: "desayuno", label: "Desayuno" },
   { key: "almuerzo", label: "Almuerzo" },
@@ -2856,6 +2875,16 @@ function MealIdeaCard({ targets, totals }) {
     // mismo plato solo por tildar la misma proteina el mismo dia.
     return selected.map((proteinId) => pickMealCombo(proteinId, seedFromString(today + mealType + proteinId) + cycleSeed)).filter(Boolean);
   }, [selected, cycleSeed, mealType]);
+
+  // Merienda/pre/post-entreno muestran una sola idea por vez (no las 2-3 a
+  // la vez como antes) para poder rotar con "Otra idea", igual que Almuerzo
+  // y Cena. Desayuno queda mostrando todas las opciones juntas -- no se pidio
+  // el mismo cambio ahi y con 3 opciones fijas alcanza.
+  const snackCombo = useMemo(() => {
+    if (!SNACK_IDEA_CYCLE.includes(mealType)) return null;
+    const today = todayISO();
+    return pickSnackCombo(mealType, seedFromString(today + mealType) + cycleSeed);
+  }, [mealType, cycleSeed]);
 
   const remainingKcal = targets?.calories != null ? Math.round(targets.calories - totals.calories) : null;
   const remainingProtein = targets?.protein != null ? Math.round((targets.protein - totals.protein) * 10) / 10 : null;
@@ -2951,6 +2980,29 @@ function MealIdeaCard({ targets, totals }) {
                   {remainingNote}
                 </>
               )}
+            </>
+          ) : SNACK_IDEA_CYCLE.includes(mealType) ? (
+            <>
+              <div className="cardlist" style={{ marginTop: 10 }}>
+                {snackCombo && (() => {
+                  const m = computeItemsMacros(snackCombo.items);
+                  return (
+                    <div className="meal-idea">
+                      <div className="hist-ex">{snackCombo.title}</div>
+                      <div className="hist-detail" style={{ marginTop: 2 }}>{snackCombo.prep}</div>
+                      <div className="hist-detail" style={{ marginTop: 6 }}>{itemsLabel(snackCombo.items)}</div>
+                      <div className="hist-detail mono" style={{ marginTop: 4 }}>
+                        ≈{fmtNum(m.kcal)} kcal · P {fmtNum(Number(m.protein.toFixed(1)))}g · C {fmtNum(Number(m.carbs.toFixed(1)))}g · G {fmtNum(Number(m.fat.toFixed(1)))}g
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+              <div className="section-sub" style={{ marginTop: 8 }}>Cantidad de referencia — ajustá a ojo.</div>
+              <button className="cancel-btn" style={{ width: "100%", marginTop: 8 }} onClick={() => setCycleSeedByMeal((prev) => ({ ...prev, [mealType]: (prev[mealType] || 0) + 1 }))}>
+                Otra idea
+              </button>
+              {remainingNote}
             </>
           ) : (
             <>
