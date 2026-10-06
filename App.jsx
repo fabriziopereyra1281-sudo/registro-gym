@@ -2916,11 +2916,18 @@ const MEAL_IDEA_PROTEINS = Object.keys(MEAL_COMBOS)
 // cambia el momento del dia. Desayuno/Merienda/pre/post van directo al banco
 // de SNACK_COMBOS, sin paso de seleccion (son ideas cortas, no "proteina +
 // guarnicion") -- muestran una idea por vez con el boton "Otra idea" para
-// rotar, igual que Almuerzo/Cena.
+// rotar, igual que Almuerzo/Cena. Media mañana/Media tarde no tienen banco
+// propio: en vez de ideas variadas para elegir, usan el mismo motor de
+// "cubrir lo que falta" que ya tienen DayVerdictCard/DailySuggestionCard
+// (un alimento concreto segun cuanta proteina quede pendiente en el dia) --
+// son sugerencias puntuales basadas en el progreso real, no un banco curado.
 const MEAL_IDEA_FULL_MEALS = ["almuerzo", "cena"];
+const MEAL_IDEA_SMART_GAP = ["media_manana", "media_tarde"];
 const MEAL_IDEA_TABS = [
   { key: "desayuno", label: "Desayuno" },
+  { key: "media_manana", label: "Media mañana" },
   { key: "almuerzo", label: "Almuerzo" },
+  { key: "media_tarde", label: "Media tarde" },
   { key: "cena", label: "Cena" },
   { key: "merienda", label: "Merienda" },
   { key: "pre_entreno", label: "Pre-entreno" },
@@ -2928,7 +2935,9 @@ const MEAL_IDEA_TABS = [
 ];
 const MEAL_IDEA_TITLES = {
   desayuno: "¿Qué desayuno hoy?",
+  media_manana: "Media mañana",
   almuerzo: "¿Qué almuerzo hoy?",
+  media_tarde: "Media tarde",
   cena: "¿Qué cocino hoy?",
   merienda: "Ideas para la merienda",
   pre_entreno: "Antes de entrenar",
@@ -2936,7 +2945,9 @@ const MEAL_IDEA_TITLES = {
 };
 const MEAL_IDEA_SUBTITLES = {
   desayuno: "Opciones fáciles, sin cocinar",
+  media_manana: "Según cómo venís con la proteína del día",
   almuerzo: "Tildá lo que tenés a mano y te tiro una idea concreta",
+  media_tarde: "Según cómo venís con la proteína del día",
   cena: "Tildá lo que tenés a mano y te tiro una idea concreta",
   merienda: "Opciones fáciles, sin cocinar",
   pre_entreno: "Carbohidrato rápido + proteína liviana, para no entrenar pesado",
@@ -2974,6 +2985,11 @@ function MealIdeaCard({ targets, totals, addMeal, dateISO }) {
   const [cycleSeedByMeal, setCycleSeedByMeal] = useState({ almuerzo: 0, cena: 0 });
   const selected = selectedByMeal[mealType] || [];
   const cycleSeed = cycleSeedByMeal[mealType] || 0;
+  // Media mañana/Media tarde: que alimento eligio el usuario del picker
+  // (si no tildo nada, suggestFoodForProtein elige el mas eficiente solo).
+  // Por pestaña, igual criterio que selectedByMeal -- cambiar de Media
+  // mañana a Media tarde no pisa lo elegido en la otra.
+  const [smartFoodIdByMeal, setSmartFoodIdByMeal] = useState({});
 
   function toggleProtein(id) {
     setSelectedByMeal((prev) => {
@@ -3009,6 +3025,13 @@ function MealIdeaCard({ targets, totals, addMeal, dateISO }) {
       {remainingFat != null ? ` y ${fmtNum(Math.max(0, remainingFat))}g de grasa` : ""} para cubrir.
     </div>
   );
+
+  // Media mañana/Media tarde: mismo motor que DayVerdictCard/DailySuggestionCard
+  // (un alimento concreto segun cuanta proteina falte), no un banco curado.
+  const smartFood =
+    MEAL_IDEA_SMART_GAP.includes(mealType) && remainingProtein != null
+      ? suggestFoodForProtein(remainingProtein, smartFoodIdByMeal[mealType] || null)
+      : null;
 
   return (
     <section className="card">
@@ -3096,6 +3119,41 @@ function MealIdeaCard({ targets, totals, addMeal, dateISO }) {
                   {remainingNote}
                 </>
               )}
+            </>
+          ) : MEAL_IDEA_SMART_GAP.includes(mealType) ? (
+            <>
+              {smartFood ? (
+                <div className="cardlist" style={{ marginTop: 10 }}>
+                  <div className="meal-idea">
+                    <div className="hist-detail" style={{ marginTop: 0 }}>
+                      Con {smartFood.label} (~{fmtNum(smartFood.kcal)} kcal, {fmtNum(smartFood.protein)}g proteína) {smartFood.capped ? "cubrís una parte de lo que falta." : "cubrís la proteína que falta."}
+                    </div>
+                    <div className="verdict-food-picker" style={{ marginTop: 6 }}>
+                      <span>¿Tenés otra cosa a mano?</span>
+                      <div className="select-wrap select-wrap-sm">
+                        <select
+                          className="select"
+                          value={smartFood.foodId}
+                          onChange={(e) => setSmartFoodIdByMeal((prev) => ({ ...prev, [mealType]: e.target.value }))}
+                        >
+                          {PROTEIN_FOODS.map((f) => (
+                            <option key={f.id} value={f.id}>{f.name}</option>
+                          ))}
+                        </select>
+                        <ChevronDown size={14} className="select-chevron" />
+                      </div>
+                    </div>
+                    <button className="cancel-btn" style={{ width: "100%", marginTop: 8 }} onClick={() => logIdea(smartFood.label, smartFood)}>
+                      Cargar esta comida
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="empty small" style={{ marginTop: 10 }}>
+                  {remainingProtein == null ? "Definí tu objetivo de proteína en Nutrición para activar esta sugerencia." : "Ya cubriste la proteína de hoy — no hace falta sumar nada extra ahora."}
+                </div>
+              )}
+              {remainingNote}
             </>
           ) : (
             <>
