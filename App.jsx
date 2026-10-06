@@ -2933,16 +2933,6 @@ const MEAL_IDEA_TABS = [
   { key: "pre_entreno", label: "Pre-entreno" },
   { key: "post_entreno", label: "Post-entreno" },
 ];
-const MEAL_IDEA_TITLES = {
-  desayuno: "¿Qué desayuno hoy?",
-  media_manana: "Media mañana",
-  almuerzo: "¿Qué almuerzo hoy?",
-  media_tarde: "Media tarde",
-  cena: "¿Qué cocino hoy?",
-  merienda: "Ideas para la merienda",
-  pre_entreno: "Antes de entrenar",
-  post_entreno: "Después de entrenar",
-};
 const MEAL_IDEA_SUBTITLES = {
   desayuno: "Opciones fáciles, sin cocinar",
   media_manana: "Según cómo venís con la proteína del día",
@@ -2985,11 +2975,6 @@ function MealIdeaCard({ targets, totals, addMeal, dateISO }) {
   const [cycleSeedByMeal, setCycleSeedByMeal] = useState({ almuerzo: 0, cena: 0 });
   const selected = selectedByMeal[mealType] || [];
   const cycleSeed = cycleSeedByMeal[mealType] || 0;
-  // Media mañana/Media tarde: que alimento eligio el usuario del picker
-  // (si no tildo nada, suggestFoodForProtein elige el mas eficiente solo).
-  // Por pestaña, igual criterio que selectedByMeal -- cambiar de Media
-  // mañana a Media tarde no pisa lo elegido en la otra.
-  const [smartFoodIdByMeal, setSmartFoodIdByMeal] = useState({});
 
   function toggleProtein(id) {
     setSelectedByMeal((prev) => {
@@ -3026,18 +3011,11 @@ function MealIdeaCard({ targets, totals, addMeal, dateISO }) {
     </div>
   );
 
-  // Media mañana/Media tarde: mismo motor que DayVerdictCard/DailySuggestionCard
-  // (un alimento concreto segun cuanta proteina falte), no un banco curado.
-  const smartFood =
-    MEAL_IDEA_SMART_GAP.includes(mealType) && remainingProtein != null
-      ? suggestFoodForProtein(remainingProtein, smartFoodIdByMeal[mealType] || null)
-      : null;
-
   return (
     <section className="card">
       <button className="card-head" onClick={() => setOpen(!open)}>
         <div>
-          <div className="section-title" style={{ marginBottom: 2 }}>{MEAL_IDEA_TITLES[mealType]}</div>
+          <div className="section-title" style={{ marginBottom: 2 }}>¿Qué como hoy?</div>
           <div className="section-sub" style={{ marginBottom: 0 }}>{MEAL_IDEA_SUBTITLES[mealType]}</div>
         </div>
         <div className={"card-icon" + (open ? " open" : "")}>{open ? <X size={16} /> : <Plus size={16} />}</div>
@@ -3122,37 +3100,12 @@ function MealIdeaCard({ targets, totals, addMeal, dateISO }) {
             </>
           ) : MEAL_IDEA_SMART_GAP.includes(mealType) ? (
             <>
-              {smartFood ? (
-                <div className="cardlist" style={{ marginTop: 10 }}>
-                  <div className="meal-idea">
-                    <div className="hist-detail" style={{ marginTop: 0 }}>
-                      Con {smartFood.label} (~{fmtNum(smartFood.kcal)} kcal, {fmtNum(smartFood.protein)}g proteína) {smartFood.capped ? "cubrís una parte de lo que falta." : "cubrís la proteína que falta."}
-                    </div>
-                    <div className="verdict-food-picker" style={{ marginTop: 6 }}>
-                      <span>¿Tenés otra cosa a mano?</span>
-                      <div className="select-wrap select-wrap-sm">
-                        <select
-                          className="select"
-                          value={smartFood.foodId}
-                          onChange={(e) => setSmartFoodIdByMeal((prev) => ({ ...prev, [mealType]: e.target.value }))}
-                        >
-                          {PROTEIN_FOODS.map((f) => (
-                            <option key={f.id} value={f.id}>{f.name}</option>
-                          ))}
-                        </select>
-                        <ChevronDown size={14} className="select-chevron" />
-                      </div>
-                    </div>
-                    <button className="cancel-btn" style={{ width: "100%", marginTop: 8 }} onClick={() => logIdea(smartFood.label, smartFood)}>
-                      Cargar esta comida
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="empty small" style={{ marginTop: 10 }}>
-                  {remainingProtein == null ? "Definí tu objetivo de proteína en Nutrición para activar esta sugerencia." : "Ya cubriste la proteína de hoy — no hace falta sumar nada extra ahora."}
-                </div>
-              )}
+              <div className="cardlist" style={{ marginTop: 10 }}>
+                {/* key=mealType: Media mañana y Media tarde no comparten
+                    estado (alimento elegido / cantidad editada) al cambiar
+                    de pestaña -- fuerza una instancia nueva por pestaña. */}
+                <ProteinGapSuggestion key={mealType} remainingProtein={remainingProtein} addMeal={addMeal} dateISO={dateISO} mealType={mealTypeLabel} />
+              </div>
               {remainingNote}
             </>
           ) : (
@@ -3194,14 +3147,7 @@ function MealIdeaCard({ targets, totals, addMeal, dateISO }) {
 // hoy?" -- son dos cosas distintas aunque convivan en la misma pestaña.
 function DailySuggestionCard({ targets, totals, mealsToday, suggestion, loading, onGenerate, addMeal, dateISO }) {
   const [open, setOpen] = useState(false);
-  // Opcion concreta (alimento + cantidad) para cubrir lo que falta de
-  // proteina, calculada por codigo -- no espera a la IA ni depende de ella,
-  // mismo motor que ya usa la tarjeta "Te falta..." (DayVerdictCard). Asi
-  // hay algo para cargar ya mismo, y el parrafo de la IA queda como
-  // contexto encima, no como unico contenido de la tarjeta.
-  const [suggestFoodId, setSuggestFoodId] = useState(null);
   const remainingProtein = targets?.protein != null ? Math.round((targets.protein - totals.protein) * 10) / 10 : null;
-  const proteinFood = remainingProtein != null ? suggestFoodForProtein(remainingProtein, suggestFoodId) : null;
   // El parrafo de la IA se guarda una vez y no se recalcula solo -- si
   // despues se carga/edita/borra una comida, lo guardado deja de coincidir
   // con lo que hay ahora. Comparar el hash evita mostrarlo como si fuera
@@ -3220,45 +3166,23 @@ function DailySuggestionCard({ targets, totals, mealsToday, suggestion, loading,
 
       {open && (
         <div className="card-form">
-          {proteinFood && (
-            <div className="meal-idea">
-              <div className="hist-detail" style={{ marginTop: 0 }}>
-                Con {proteinFood.label} (~{fmtNum(proteinFood.kcal)} kcal, {fmtNum(proteinFood.protein)}g proteína) {proteinFood.capped ? "cubrís una parte de lo que falta." : "cubrís la proteína que falta."}
-              </div>
-              <div className="verdict-food-picker" style={{ marginTop: 6 }}>
-                <span>¿Tenés otra cosa a mano?</span>
-                <div className="select-wrap select-wrap-sm">
-                  <select className="select" value={proteinFood.foodId} onChange={(e) => setSuggestFoodId(e.target.value)}>
-                    {PROTEIN_FOODS.map((f) => (
-                      <option key={f.id} value={f.id}>{f.name}</option>
-                    ))}
-                  </select>
-                  <ChevronDown size={14} className="select-chevron" />
-                </div>
-              </div>
-              <button
-                className="cancel-btn"
-                style={{ width: "100%", marginTop: 8 }}
-                onClick={() =>
-                  addMeal({ date: dateISO, mealType: "Otro", name: proteinFood.label, calories: proteinFood.kcal, protein: proteinFood.protein, carbs: proteinFood.carbs, fat: proteinFood.fat })
-                }
-              >
-                Cargar esta comida
-              </button>
-            </div>
-          )}
+          {/* Opcion concreta (alimento + cantidad editable) para cubrir lo que
+              falta de proteina, calculada por codigo -- no espera a la IA ni
+              depende de ella. Asi hay algo para cargar ya mismo, y el parrafo
+              de la IA queda como contexto encima, no como unico contenido. */}
+          <ProteinGapSuggestion remainingProtein={remainingProtein} addMeal={addMeal} dateISO={dateISO} mealType="Otro" />
 
           {suggestion ? (
             <>
               {isStale && (
-                <div className="hist-detail accent2" style={{ marginTop: proteinFood ? 10 : 0 }}>
+                <div className="hist-detail accent2" style={{ marginTop: 10 }}>
                   ⚠️ Esto es de antes de tu última comida cargada/editada — puede no coincidir con los números de arriba. Tocá "Actualizar" para una lectura al día.
                 </div>
               )}
-              <div className="hist-detail" style={{ fontSize: 14, lineHeight: 1.5, marginTop: proteinFood || isStale ? 10 : 0, opacity: isStale ? 0.6 : 1 }}>{suggestion.text}</div>
+              <div className="hist-detail" style={{ fontSize: 14, lineHeight: 1.5, marginTop: 10, opacity: isStale ? 0.6 : 1 }}>{suggestion.text}</div>
             </>
           ) : (
-            <div className="empty small" style={{ marginTop: proteinFood ? 10 : 0 }}>Todavía no pediste la lectura de la IA. Tocá el botón para una opinión con más contexto.</div>
+            <div className="empty small" style={{ marginTop: 10 }}>Todavía no pediste la lectura de la IA. Tocá el botón para una opinión con más contexto.</div>
           )}
           <button
             className="cancel-btn"
@@ -3343,23 +3267,16 @@ function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwL
     [targets, isRestDay, skippedTrainingDay, activityKcal]
   );
 
-  const [suggestFoodId, setSuggestFoodId] = useState(null);
   const dayVerdict = useMemo(
-    () => computeDayVerdict({ totals, targets: effectiveTargets, logs, config, suggestFoodId, dateISO: selectedDate, isToday }),
-    [totals, effectiveTargets, logs, config, suggestFoodId, selectedDate, isToday]
+    () => computeDayVerdict({ totals, targets: effectiveTargets, logs, config, dateISO: selectedDate, isToday }),
+    [totals, effectiveTargets, logs, config, selectedDate, isToday]
   );
 
   return (
     <div className="tabpane">
       <TargetsCard targets={targets} onSave={saveTargets} latestWeight={latestWeight} />
 
-      <DayVerdictCard
-        verdict={dayVerdict}
-        onPickFood={setSuggestFoodId}
-        onLogFood={(food) =>
-          addMeal({ date: selectedDate, mealType: "Otro", name: food.label, calories: food.kcal, protein: food.protein, carbs: food.carbs, fat: food.fat })
-        }
-      />
+      <DayVerdictCard verdict={dayVerdict} addMeal={addMeal} dateISO={selectedDate} />
 
       <MealIdeaCard targets={effectiveTargets} totals={totals} addMeal={addMeal} dateISO={selectedDate} />
 
@@ -3482,7 +3399,7 @@ function computeFoodQtyForProtein(foodId, remainingProtein) {
     ? `${fmtNum(qty)} ${qty === 1 ? food.unitWord : food.unitWordPlural} de ${food.name}`
     : `${fmtNum(qty)} g de ${food.name}`;
 
-  return { foodId: food.id, label, kcal, protein, carbs, fat, capped };
+  return { foodId: food.id, qty, label, kcal, protein, carbs, fat, capped };
 }
 
 // Si no se eligio un alimento puntual, busca en FOOD_DB el mas eficiente
@@ -3497,6 +3414,87 @@ function suggestFoodForProtein(remainingProtein, chosenFoodId) {
   const foodId = chosenFoodId || bestProteinFoodId();
   if (!foodId) return null;
   return computeFoodQtyForProtein(foodId, remainingProtein);
+}
+
+// Bloque reusable: sugiere UN alimento concreto para cubrir la proteina
+// que falta en el dia, con cantidad editable en vivo (no obliga a cargar
+// la porcion de referencia tal cual -- ej. nadie se come 300g de matambre
+// de una) y boton para guardarla directo. Mismo motor en los tres lugares
+// que lo usan (DayVerdictCard, DailySuggestionCard, MealIdeaCard en Media
+// mañana/tarde) -- evita triplicar la logica de edicion de cantidad.
+function ProteinGapSuggestion({ remainingProtein, addMeal, dateISO, mealType }) {
+  const [chosenFoodId, setChosenFoodId] = useState(null);
+  const [qtyInput, setQtyInput] = useState("");
+
+  const base = remainingProtein != null ? suggestFoodForProtein(remainingProtein, chosenFoodId) : null;
+  const baseFoodId = base?.foodId ?? null;
+
+  // Si cambia el alimento sugerido (porque el usuario tildo otro en el
+  // picker, o porque recalculo solo) la cantidad editada a mano ya no
+  // aplica a ese alimento -- se reinicia a partir de la nueva porcion
+  // de referencia.
+  useEffect(() => {
+    if (baseFoodId) setQtyInput(toInput(base.qty));
+  }, [baseFoodId]);
+
+  if (remainingProtein == null) {
+    return <div className="empty small">Definí tu objetivo de proteína en Nutrición para activar esta sugerencia.</div>;
+  }
+  if (!base) {
+    return <div className="empty small">Ya cubriste la proteína de hoy — no hace falta sumar nada extra ahora.</div>;
+  }
+
+  const food = FOOD_DB.find((f) => f.id === base.foodId);
+  const qty = toNum(qtyInput);
+  const macros = qty != null && qty > 0 ? computeFoodMacros(base.foodId, qty) : null;
+  const unitWord = food.unit ? (qty === 1 ? food.unitWord : food.unitWordPlural) : "g";
+
+  return (
+    <div className="meal-idea">
+      <div className="hist-ex">{food.name}</div>
+      <div className="hist-detail" style={{ marginTop: 2 }}>
+        {base.capped
+          ? `La porción de referencia (${base.label}) ya cubre bastante, pero no toda tu proteína pendiente — ajustá la cantidad a lo que realmente vayas a comer.`
+          : "Ajustá la cantidad a lo que realmente vayas a comer."}
+      </div>
+      <div className="verdict-food-picker" style={{ marginTop: 6 }}>
+        <span>¿Tenés otra cosa a mano?</span>
+        <div className="select-wrap select-wrap-sm">
+          <select className="select" value={base.foodId} onChange={(e) => setChosenFoodId(e.target.value)}>
+            {PROTEIN_FOODS.map((f) => (
+              <option key={f.id} value={f.id}>{f.name}</option>
+            ))}
+          </select>
+          <ChevronDown size={14} className="select-chevron" />
+        </div>
+      </div>
+      <div className="verdict-food-picker" style={{ marginTop: 6 }}>
+        <span>Cantidad</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <NumInput value={qtyInput} onChange={setQtyInput} />
+          <span className="section-sub" style={{ marginBottom: 0 }}>{unitWord}</span>
+        </div>
+      </div>
+      {macros ? (
+        <div className="hist-detail mono" style={{ marginTop: 6 }}>
+          ≈{fmtNum(macros.kcal)} kcal · P {fmtNum(Number(macros.protein.toFixed(1)))}g · C {fmtNum(Number(macros.carbs.toFixed(1)))}g · G {fmtNum(Number(macros.fat.toFixed(1)))}g
+        </div>
+      ) : (
+        <div className="hist-detail" style={{ marginTop: 6 }}>Ingresá una cantidad válida.</div>
+      )}
+      <button
+        className="cancel-btn"
+        style={{ width: "100%", marginTop: 8 }}
+        disabled={!macros}
+        onClick={() => {
+          const label = food.unit ? `${fmtNum(qty)} ${unitWord} de ${food.name}` : `${fmtNum(qty)} g de ${food.name}`;
+          addMeal({ date: dateISO, mealType, name: label, calories: macros.kcal, protein: macros.protein, carbs: macros.carbs, fat: macros.fat });
+        }}
+      >
+        Cargar esta comida
+      </button>
+    </div>
+  );
 }
 
 // Estimacion gratuita de gasto energetico de una actividad, por METs segun
@@ -3562,7 +3560,7 @@ function suggestFixForExcess(overKcalBy) {
 // cuanta comida (kcal/proteina) queda por cargar, y si ya se registro el
 // entrenamiento del dia (segun el split lunes-viernes; sabado/domingo es
 // descanso y no se evalua entrenamiento).
-function computeDayVerdict({ totals, targets, logs, config, suggestFoodId, dateISO, isToday }) {
+function computeDayVerdict({ totals, targets, logs, config, dateISO, isToday }) {
   const dayWord = isToday ? "hoy" : "ese día";
   if (!targets) {
     return { tone: "info", text: `Definí tus objetivos diarios arriba para ver acá qué falta ${dayWord}.` };
@@ -3591,7 +3589,10 @@ function computeDayVerdict({ totals, targets, logs, config, suggestFoodId, dateI
   const parts = [];
   let worstTone = "ok";
   let suggestion = null;
-  let proteinGapFood = null;
+  // Cuanta proteina falta, para que la tarjeta arme su propia sugerencia de
+  // alimento con cantidad editable (ver ProteinGapSuggestion) -- esta
+  // funcion ya no decide que alimento mostrar, solo si hace falta mostrar algo.
+  let showProteinGap = false;
 
   if (kcalTarget > 0 && overKcalBy > kcalTarget * 0.1) {
     // Pasarte del objetivo es una alerta valida a cualquier hora del dia.
@@ -3606,13 +3607,7 @@ function computeDayVerdict({ totals, targets, logs, config, suggestFoodId, dateI
     if (remainingProtein > 5) {
       parts.push(`${fmtNum(remainingProtein)}g de proteína`);
       if (worstTone === "ok") worstTone = "warn";
-      const food = suggestFoodForProtein(remainingProtein, suggestFoodId);
-      if (food) {
-        proteinGapFood = food;
-        suggestion = `Con ${food.label} (~${fmtNum(food.kcal)} kcal, ${fmtNum(food.protein)}g proteína) ${
-          food.capped ? "cubrís una parte — el resto sumalo en otra comida." : "lo cubrís."
-        }`;
-      }
+      showProteinGap = true;
     }
   }
 
@@ -3632,10 +3627,10 @@ function computeDayVerdict({ totals, targets, logs, config, suggestFoodId, dateI
         tone: "info",
         text: `Vas en camino — tenés ${fmtNum(Math.max(0, remainingKcal))} kcal y ${fmtNum(Math.max(0, remainingProtein))}g de proteína disponibles para el resto de ${dayWord}, y ${trainingBit}.`,
         suggestion: null,
-        proteinGapFood: null,
+        remainingProtein: null,
       };
     }
-    return { tone: "ok", text: `Vas perfecto: cumpliste con la comida y ${trainingBit}.`, suggestion: null, proteinGapFood: null };
+    return { tone: "ok", text: `Vas perfecto: cumpliste con la comida y ${trainingBit}.`, suggestion: null, remainingProtein: null };
   }
 
   const joined =
@@ -3643,37 +3638,20 @@ function computeDayVerdict({ totals, targets, logs, config, suggestFoodId, dateI
       ? parts[0]
       : parts.slice(0, -1).join(", ") + " y " + parts[parts.length - 1];
 
-  return { tone: worstTone, text: `Te falta: ${joined}.`, suggestion, proteinGapFood };
+  return { tone: worstTone, text: `Te falta: ${joined}.`, suggestion, remainingProtein: showProteinGap ? remainingProtein : null };
 }
 
 const PROTEIN_FOODS = FOOD_DB.filter((f) => f.cat === "Proteínas");
 
-function DayVerdictCard({ verdict, onPickFood, onLogFood }) {
+function DayVerdictCard({ verdict, addMeal, dateISO }) {
   return (
     <section className={"card verdict-card verdict-" + verdict.tone}>
       <div className="verdict-text">{verdict.text}</div>
       {verdict.suggestion && <div className="verdict-suggestion">{verdict.suggestion}</div>}
-      {verdict.proteinGapFood && (
-        <>
-          <div className="verdict-food-picker">
-            <span>¿Tenés otra cosa a mano?</span>
-            <div className="select-wrap select-wrap-sm">
-              <select
-                className="select"
-                value={verdict.proteinGapFood.foodId}
-                onChange={(e) => onPickFood(e.target.value)}
-              >
-                {PROTEIN_FOODS.map((f) => (
-                  <option key={f.id} value={f.id}>{f.name}</option>
-                ))}
-              </select>
-              <ChevronDown size={14} className="select-chevron" />
-            </div>
-          </div>
-          <button className="cancel-btn" style={{ width: "100%", marginTop: 8 }} onClick={() => onLogFood(verdict.proteinGapFood)}>
-            Cargar esta comida
-          </button>
-        </>
+      {verdict.remainingProtein != null && (
+        <div style={{ marginTop: 10 }}>
+          <ProteinGapSuggestion remainingProtein={verdict.remainingProtein} addMeal={addMeal} dateISO={dateISO} mealType="Otro" />
+        </div>
       )}
     </section>
   );
