@@ -3002,6 +3002,7 @@ function MealIdeaCard({ targets, totals, addMeal, dateISO }) {
 
   const remainingKcal = targets?.calories != null ? Math.round(targets.calories - totals.calories) : null;
   const remainingProtein = targets?.protein != null ? Math.round((targets.protein - totals.protein) * 10) / 10 : null;
+  const remainingCarbs = targets?.carbs != null ? Math.round((targets.carbs - totals.carbs) * 10) / 10 : null;
   const remainingFat = targets?.fat != null ? Math.round((targets.fat - totals.fat) * 10) / 10 : null;
   const remainingNote = remainingKcal != null && (
     <div className="section-sub" style={{ marginTop: 10, marginBottom: 0 }}>
@@ -3097,6 +3098,16 @@ function MealIdeaCard({ targets, totals, addMeal, dateISO }) {
                   {remainingNote}
                 </>
               )}
+              {/* key=mealType: Almuerzo y Cena no comparten lo que esta
+                  armando acá (misma razon que en Media mañana/tarde). */}
+              <PlateBuilder
+                key={mealType}
+                remainingKcal={remainingKcal}
+                remainingCarbs={remainingCarbs}
+                addMeal={addMeal}
+                dateISO={dateISO}
+                mealTypeLabel={mealTypeLabel}
+              />
             </>
           ) : MEAL_IDEA_SMART_GAP.includes(mealType) ? (
             <>
@@ -3497,6 +3508,163 @@ function ProteinGapSuggestion({ remainingProtein, addMeal, dateISO, mealType }) 
   );
 }
 
+// Calculadora "Armá tu plato": a diferencia de MEAL_COMBOS (receta fija con
+// porciones fijas por proteina), acá el usuario dice exactamente qué tiene
+// y cuánto (ej. "tengo 150g de matambre"), elige qué carbohidrato tiene a
+// mano (no una pareja fija por proteina), y el sistema calcula cuánto de
+// ese carbohidrato conviene sumar mirando lo que queda del día en kcal y
+// carbohidratos -- no sugiere pasarse. La verdura es un acompañante
+// opcional de porción fija (100g): no compite de verdad por presupuesto
+// calórico, así que no justifica el mismo cálculo que el carbohidrato.
+function PlateBuilder({ remainingKcal, remainingCarbs, addMeal, dateISO, mealTypeLabel }) {
+  const [proteinId, setProteinId] = useState(MEAL_IDEA_PROTEINS[0]?.id ?? "");
+  const [proteinQtyInput, setProteinQtyInput] = useState("");
+  const [carbId, setCarbId] = useState("");
+  const [carbQtyInput, setCarbQtyInput] = useState("");
+  const [vegId, setVegId] = useState("");
+
+  const proteinFood = FOOD_DB.find((f) => f.id === proteinId) || null;
+  const proteinQty = toNum(proteinQtyInput);
+  const proteinMacros = proteinFood && proteinQty != null && proteinQty > 0 ? computeFoodMacros(proteinId, proteinQty) : null;
+
+  const carbFood = carbId ? FOOD_DB.find((f) => f.id === carbId) : null;
+
+  // Toma el limite mas restrictivo entre kcal y carbohidratos que quedan
+  // (ya descontada la proteina elegida) -- mismo criterio que ya usa la
+  // sugerencia de porcion mas chica para proteinas grasosas en los combos
+  // fijos. Sin piso minimo: si no queda margen, el numero da 0 o negativo
+  // y se avisa, en vez de inflar una cantidad que no corresponde.
+  const suggestedCarbGrams = useMemo(() => {
+    if (!carbFood || !proteinMacros) return null;
+    const kcalLeft = remainingKcal != null ? remainingKcal - proteinMacros.kcal : null;
+    const carbsLeft = remainingCarbs != null ? remainingCarbs - proteinMacros.carbs : null;
+    const byKcal = kcalLeft != null ? (kcalLeft / carbFood.kcal) * 100 : Infinity;
+    const byCarbs = carbsLeft != null ? (carbsLeft / carbFood.carbs) * 100 : Infinity;
+    // Tope de porcion realista aunque sobre mucho margen del dia (mismo
+    // MAX_SINGLE_PORTION_G que ya usa computeFoodQtyForProtein) -- nadie se
+    // sirve 500g de arroz solo porque "entraba" en las kcal que quedaban.
+    return Math.round(Math.min(byKcal, byCarbs, MAX_SINGLE_PORTION_G) / 10) * 10;
+  }, [carbFood, proteinMacros, remainingKcal, remainingCarbs]);
+
+  // Precarga la cantidad sugerida al elegir un carbohidrato (o apenas la
+  // proteina queda cargada, si el carbohidrato ya estaba elegido) -- no se
+  // vuelve a pisar en cada tecla que el usuario toque despues en cualquiera
+  // de los dos campos, para no pelearse con una edicion manual en curso.
+  const hasProtein = proteinMacros != null;
+  useEffect(() => {
+    if (carbId && suggestedCarbGrams != null) setCarbQtyInput(toInput(Math.max(0, suggestedCarbGrams)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [carbId, hasProtein]);
+
+  const carbQty = toNum(carbQtyInput);
+  const carbMacros = carbFood && carbQty != null && carbQty > 0 ? computeFoodMacros(carbId, carbQty) : null;
+
+  const vegFood = vegId ? FOOD_DB.find((f) => f.id === vegId) : null;
+  const vegMacros = vegFood ? computeFoodMacros(vegId, 100) : null;
+
+  const totalMacros = [proteinMacros, carbMacros, vegMacros].filter(Boolean).reduce(
+    (acc, m) => ({ kcal: acc.kcal + m.kcal, protein: acc.protein + m.protein, carbs: acc.carbs + m.carbs, fat: acc.fat + m.fat }),
+    { kcal: 0, protein: 0, carbs: 0, fat: 0 }
+  );
+
+  function logPlate() {
+    const parts = [
+      proteinFood ? `${fmtNum(proteinQty)}g de ${proteinFood.name}` : null,
+      carbMacros && carbFood ? `${fmtNum(carbQty)}g de ${carbFood.name}` : null,
+      vegMacros && vegFood ? `100g de ${vegFood.name}` : null,
+    ].filter(Boolean);
+    addMeal({
+      date: dateISO,
+      mealType: mealTypeLabel,
+      name: parts.join(" + "),
+      calories: Math.round(totalMacros.kcal),
+      protein: Number(totalMacros.protein.toFixed(1)),
+      carbs: Number(totalMacros.carbs.toFixed(1)),
+      fat: Number(totalMacros.fat.toFixed(1)),
+    });
+  }
+
+  return (
+    <div className="card-form" style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid rgba(237,234,227,0.06)" }}>
+      <div className="section-title" style={{ marginBottom: 2, fontSize: 15 }}>Armá tu plato</div>
+      <div className="section-sub" style={{ marginBottom: 8 }}>Decí qué tenés y cuánto — calculamos el resto</div>
+
+      <div className="verdict-food-picker">
+        <span>Proteína</span>
+        <div className="select-wrap select-wrap-sm">
+          <select className="select" value={proteinId} onChange={(e) => setProteinId(e.target.value)}>
+            {MEAL_IDEA_PROTEINS.map((f) => (
+              <option key={f.id} value={f.id}>{f.name}</option>
+            ))}
+          </select>
+          <ChevronDown size={14} className="select-chevron" />
+        </div>
+      </div>
+      <div className="verdict-food-picker" style={{ marginTop: 6 }}>
+        <span>Cantidad que tenés</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <NumInput value={proteinQtyInput} onChange={setProteinQtyInput} placeholder="gramos" />
+          <span className="section-sub" style={{ marginBottom: 0 }}>g</span>
+        </div>
+      </div>
+
+      <div className="verdict-food-picker" style={{ marginTop: 10 }}>
+        <span>Carbohidrato que tenés</span>
+        <div className="select-wrap select-wrap-sm">
+          <select className="select" value={carbId} onChange={(e) => setCarbId(e.target.value)}>
+            <option value="">Sin carbohidrato</option>
+            {CARB_FOODS.map((f) => (
+              <option key={f.id} value={f.id}>{f.name}</option>
+            ))}
+          </select>
+          <ChevronDown size={14} className="select-chevron" />
+        </div>
+      </div>
+      {carbId && !hasProtein && (
+        <div className="hist-detail" style={{ marginTop: 4 }}>Cargá primero cuánta proteína tenés para calcular la cantidad.</div>
+      )}
+      {carbId && hasProtein && (
+        <div className="verdict-food-picker" style={{ marginTop: 6 }}>
+          <span>Cantidad</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <NumInput value={carbQtyInput} onChange={setCarbQtyInput} />
+            <span className="section-sub" style={{ marginBottom: 0 }}>g</span>
+          </div>
+        </div>
+      )}
+      {carbId && hasProtein && suggestedCarbGrams != null && suggestedCarbGrams <= 0 && (
+        <div className="hist-detail accent2" style={{ marginTop: 4 }}>
+          Ya no te queda margen de kcal/carbohidratos hoy para sumar {carbFood.name.toLowerCase()} — podés cargarlo igual si querés, pero te vas a pasar del objetivo.
+        </div>
+      )}
+
+      <div className="verdict-food-picker" style={{ marginTop: 10 }}>
+        <span>Verdura (opcional)</span>
+        <div className="select-wrap select-wrap-sm">
+          <select className="select" value={vegId} onChange={(e) => setVegId(e.target.value)}>
+            <option value="">Sin verdura</option>
+            {VEG_FOODS.map((f) => (
+              <option key={f.id} value={f.id}>{f.name}</option>
+            ))}
+          </select>
+          <ChevronDown size={14} className="select-chevron" />
+        </div>
+      </div>
+      {vegId && <div className="section-sub" style={{ marginTop: 4, marginBottom: 0 }}>Porción de referencia: 100g.</div>}
+
+      {totalMacros.kcal > 0 && (
+        <div className="hist-detail mono" style={{ marginTop: 10 }}>
+          Total: ≈{fmtNum(Math.round(totalMacros.kcal))} kcal · P {fmtNum(Number(totalMacros.protein.toFixed(1)))}g · C {fmtNum(Number(totalMacros.carbs.toFixed(1)))}g · G {fmtNum(Number(totalMacros.fat.toFixed(1)))}g
+        </div>
+      )}
+
+      <button className="cancel-btn" style={{ width: "100%", marginTop: 8 }} disabled={!hasProtein} onClick={logPlate}>
+        Cargar plato completo
+      </button>
+    </div>
+  );
+}
+
 // Estimacion gratuita de gasto energetico de una actividad, por METs segun
 // el RPE cargado (no depende del reloj) y el peso actual: kcal/min = MET x
 // 3.5 x peso(kg) / 200 -- formula estandar de fisiologia del ejercicio.
@@ -3642,6 +3810,11 @@ function computeDayVerdict({ totals, targets, logs, config, dateISO, isToday }) 
 }
 
 const PROTEIN_FOODS = FOOD_DB.filter((f) => f.cat === "Proteínas");
+// Usados por el calculador "Armá tu plato" (ver PlateBuilder): el
+// carbohidrato y la verdura que el usuario tiene a mano, no una lista
+// fija por proteina como MEAL_COMBOS.
+const CARB_FOODS = FOOD_DB.filter((f) => f.cat === "Carbohidratos");
+const VEG_FOODS = FOOD_DB.filter((f) => f.cat === "Verduras");
 
 function DayVerdictCard({ verdict, addMeal, dateISO }) {
   return (
