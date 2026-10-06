@@ -421,6 +421,20 @@ function seedFromString(s) {
   return h;
 }
 
+// Huella de las comidas de hoy, usada por la sugerencia diaria con IA
+// (generateDailySuggestion / DailySuggestionCard) para saber si lo que
+// esta guardado en daily_suggestions sigue correspondiendo a lo que hay
+// cargado ahora mismo, o si quedo vieja porque se agrego/edito/borro algo
+// despues de generarla.
+function mealsHashFor(mealsToday) {
+  const signatureSource = JSON.stringify(
+    mealsToday
+      .map((m) => [m.id, m.mealType, m.calories, m.protein, m.carbs, m.fat])
+      .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+  );
+  return String(seedFromString(signatureSource));
+}
+
 // Banco curado de meriendas, pre y post-entreno -- misma logica que
 // MEAL_COMBOS (sin IA, alimentos de FOOD_DB) pero mas simples: no son un
 // plato con proteina+carbo+verdura, son 2-3 alimentos concretos con su
@@ -953,12 +967,7 @@ export default function App() {
   // haber cargado nada nuevo.
   async function generateDailySuggestion(mealsToday, totals, targets) {
     const today = todayISO();
-    const signatureSource = JSON.stringify(
-      mealsToday
-        .map((m) => [m.id, m.mealType, m.calories, m.protein, m.carbs, m.fat])
-        .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
-    );
-    const mealsHash = String(seedFromString(signatureSource));
+    const mealsHash = mealsHashFor(mealsToday);
 
     if (dailySuggestion && dailySuggestion.date === today && dailySuggestion.mealsHash === mealsHash) {
       return; // nada cambio desde la ultima vez -- no gastar cupo de IA de nuevo
@@ -3135,6 +3144,11 @@ function DailySuggestionCard({ targets, totals, mealsToday, suggestion, loading,
   const [suggestFoodId, setSuggestFoodId] = useState(null);
   const remainingProtein = targets?.protein != null ? Math.round((targets.protein - totals.protein) * 10) / 10 : null;
   const proteinFood = remainingProtein != null ? suggestFoodForProtein(remainingProtein, suggestFoodId) : null;
+  // El parrafo de la IA se guarda una vez y no se recalcula solo -- si
+  // despues se carga/edita/borra una comida, lo guardado deja de coincidir
+  // con lo que hay ahora. Comparar el hash evita mostrarlo como si fuera
+  // al dia cuando en realidad quedo viejo (ver generateDailySuggestion).
+  const isStale = suggestion != null && suggestion.mealsHash !== mealsHashFor(mealsToday);
 
   return (
     <section className="card">
@@ -3177,7 +3191,14 @@ function DailySuggestionCard({ targets, totals, mealsToday, suggestion, loading,
           )}
 
           {suggestion ? (
-            <div className="hist-detail" style={{ fontSize: 14, lineHeight: 1.5, marginTop: proteinFood ? 10 : 0 }}>{suggestion.text}</div>
+            <>
+              {isStale && (
+                <div className="hist-detail accent2" style={{ marginTop: proteinFood ? 10 : 0 }}>
+                  ⚠️ Esto es de antes de tu última comida cargada/editada — puede no coincidir con los números de arriba. Tocá "Actualizar" para una lectura al día.
+                </div>
+              )}
+              <div className="hist-detail" style={{ fontSize: 14, lineHeight: 1.5, marginTop: proteinFood || isStale ? 10 : 0, opacity: isStale ? 0.6 : 1 }}>{suggestion.text}</div>
+            </>
           ) : (
             <div className="empty small" style={{ marginTop: proteinFood ? 10 : 0 }}>Todavía no pediste la lectura de la IA. Tocá el botón para una opinión con más contexto.</div>
           )}
