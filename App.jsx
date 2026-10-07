@@ -400,17 +400,26 @@ function pickMealCombo(proteinId, seed) {
   return { proteinId, ...options[idx] };
 }
 
-// Macros totales estimados de la combinacion con las porciones por defecto.
-function computeComboMacros(combo) {
-  const parts = [
-    computeFoodMacros(combo.proteinId, MEAL_COMBO_PORTIONS.protein),
-    computeFoodMacros(combo.carb, MEAL_COMBO_PORTIONS.carb),
-    combo.veg ? computeFoodMacros(combo.veg, MEAL_COMBO_PORTIONS.veg) : null,
-  ].filter(Boolean);
-  return parts.reduce(
+// Macros totales de la combinacion. La proteina acepta una cantidad editable
+// (default: la porcion de referencia) -- carbohidrato y verdura se quedan
+// fijos en su porcion de referencia. Si la cantidad de proteina es invalida
+// devuelve null (en vez de descartarla en silencio y mostrar un total
+// incompleto con solo carbohidrato+verdura).
+function computeComboMacros(combo, proteinQty = MEAL_COMBO_PORTIONS.protein) {
+  const proteinMacros = computeFoodMacros(combo.proteinId, proteinQty);
+  if (!proteinMacros) return null;
+  const carbMacros = computeFoodMacros(combo.carb, MEAL_COMBO_PORTIONS.carb);
+  const vegMacros = combo.veg ? computeFoodMacros(combo.veg, MEAL_COMBO_PORTIONS.veg) : null;
+  return [proteinMacros, carbMacros, vegMacros].filter(Boolean).reduce(
     (acc, m) => ({ kcal: acc.kcal + m.kcal, protein: acc.protein + m.protein, carbs: acc.carbs + m.carbs, fat: acc.fat + m.fat }),
     { kcal: 0, protein: 0, carbs: 0, fat: 0 }
   );
+}
+// Default inicial de cantidad al mostrar un combo: para alimentos por unidad
+// (ej. huevo) no tiene sentido arrancar en 150 "unidades" -- 3 es una
+// porcion de referencia razonable. El resto sigue en MEAL_COMBO_PORTIONS.protein.
+function defaultComboProteinQty(food) {
+  return food.unit ? 3 : MEAL_COMBO_PORTIONS.protein;
 }
 
 // Un entero estable por fecha + texto, para variar la sugerencia dia a dia
@@ -2984,6 +2993,14 @@ function MealIdeaCard({ targets, totals, addMeal, dateISO }) {
     setCycleSeedByMeal((prev) => ({ ...prev, [mealType]: 0 })); // nueva seleccion, arrancar de la primera idea de nuevo
   }
 
+  // Cantidad de proteina editada por combo (clave: proteinId), por pestaña
+  // -- igual que selectedByMeal, para que Almuerzo y Cena no se pisen.
+  const [comboQtyByMeal, setComboQtyByMeal] = useState({ almuerzo: {}, cena: {} });
+  const comboQty = comboQtyByMeal[mealType] || {};
+  function setComboProteinQty(proteinId, value) {
+    setComboQtyByMeal((prev) => ({ ...prev, [mealType]: { ...(prev[mealType] || {}), [proteinId]: value } }));
+  }
+
   const combos = useMemo(() => {
     const today = todayISO();
     // mealType entra en la seed para que almuerzo y cena no coincidan en el
@@ -3048,31 +3065,39 @@ function MealIdeaCard({ targets, totals, addMeal, dateISO }) {
                 <>
                   <div className="cardlist" style={{ marginTop: 10 }}>
                     {combos.map((combo) => {
-                      const m = computeComboMacros(combo);
                       const proteinFood = FOOD_DB.find((f) => f.id === combo.proteinId);
                       const carbFood = FOOD_DB.find((f) => f.id === combo.carb);
                       const vegFood = combo.veg ? FOOD_DB.find((f) => f.id === combo.veg) : null;
+                      const qtyInput = comboQty[combo.proteinId] ?? toInput(defaultComboProteinQty(proteinFood));
+                      const qty = toNum(qtyInput);
+                      const unitWord = proteinFood.unit ? (qty === 1 ? proteinFood.unitWord : proteinFood.unitWordPlural) : "g";
+                      const m = computeComboMacros(combo, qty);
                       // Cada plato dice su propia porcion con el nombre exacto
                       // del alimento (no "proteína"/"carbohidrato" generico)
                       // para que el numero se entienda sin tener que adivinar
-                      // a que corresponde.
+                      // a que corresponde. La de proteina refleja la cantidad
+                      // editada, carbohidrato y verdura se quedan en su
+                      // porcion de referencia fija.
                       const portionParts = [
-                        proteinFood ? `${fmtNum(MEAL_COMBO_PORTIONS.protein)}g de ${proteinFood.name}` : null,
+                        proteinFood && qty != null ? `${fmtNum(qty)} ${unitWord} de ${proteinFood.name}` : null,
                         carbFood ? `${fmtNum(MEAL_COMBO_PORTIONS.carb)}g de ${carbFood.name}` : null,
                         vegFood ? `${fmtNum(MEAL_COMBO_PORTIONS.veg)}g de ${vegFood.name}` : null,
                       ].filter(Boolean);
                       // Si la proteina elegida es grasosa (asado, matambre,
-                      // etc.) y la porcion de referencia (150g) ya se comeria
-                      // toda la grasa que queda en el dia, sugerir una porcion
-                      // mas chica en vez de dejar que se entere recien al
-                      // cargarlo en Nutricion. No toca carb/veg: ya son bajos
-                      // en grasa de por si, la variable es siempre la carne.
+                      // etc.) y la cantidad ACTUAL (editada, no el fijo de
+                      // referencia) ya se comeria toda la grasa que queda en
+                      // el dia, sugerir una porcion mas chica en vez de dejar
+                      // que se entere recien al cargarlo en Nutricion. No
+                      // toca carb/veg: ya son bajos en grasa de por si, la
+                      // variable es siempre la carne. Si el usuario ya bajo
+                      // la cantidad a algo que entra en el margen, el aviso
+                      // deja de mostrarse solo.
                       let fatSuggestion = null;
-                      if (remainingFat != null && proteinFood && !proteinFood.unit && proteinFood.fat > 0) {
-                        const fatAtDefaultPortion = Number((proteinFood.fat * (MEAL_COMBO_PORTIONS.protein / 100)).toFixed(1));
-                        if (fatAtDefaultPortion > remainingFat && remainingFat > 0) {
+                      if (remainingFat != null && proteinFood && !proteinFood.unit && proteinFood.fat > 0 && qty != null && qty > 0) {
+                        const fatAtQty = Number((proteinFood.fat * (qty / 100)).toFixed(1));
+                        if (fatAtQty > remainingFat && remainingFat > 0) {
                           const suggestedGrams = Math.max(50, Math.floor((remainingFat / proteinFood.fat) * 100 / 10) * 10);
-                          fatSuggestion = `Te quedan ${fmtNum(Math.max(0, remainingFat))}g de grasa hoy — con esta proteína más grasosa conviene una porción más chica: ~${fmtNum(suggestedGrams)}g de ${proteinFood.name} en vez de 150g.`;
+                          fatSuggestion = `Te quedan ${fmtNum(Math.max(0, remainingFat))}g de grasa hoy — con esta proteína más grasosa conviene una porción más chica: ~${fmtNum(suggestedGrams)}g de ${proteinFood.name} en vez de ${fmtNum(qty)}g.`;
                         }
                       }
                       return (
@@ -3080,18 +3105,29 @@ function MealIdeaCard({ targets, totals, addMeal, dateISO }) {
                           <div className="hist-ex">{combo.title}</div>
                           <div className="hist-detail" style={{ marginTop: 2 }}>{combo.prep}</div>
                           <div className="hist-detail" style={{ marginTop: 6 }}>{portionParts.join(" · ")}</div>
-                          <div className="hist-detail mono" style={{ marginTop: 4 }}>
-                            ≈{fmtNum(m.kcal)} kcal · P {fmtNum(Number(m.protein.toFixed(1)))}g · C {fmtNum(Number(m.carbs.toFixed(1)))}g · G {fmtNum(Number(m.fat.toFixed(1)))}g
+                          <div className="verdict-food-picker" style={{ marginTop: 6 }}>
+                            <span>Cantidad de {proteinFood.name}</span>
+                            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                              <NumInput value={qtyInput} onChange={(v) => setComboProteinQty(combo.proteinId, v)} />
+                              <span className="section-sub" style={{ marginBottom: 0 }}>{unitWord}</span>
+                            </div>
                           </div>
+                          {m ? (
+                            <div className="hist-detail mono" style={{ marginTop: 6 }}>
+                              ≈{fmtNum(m.kcal)} kcal · P {fmtNum(Number(m.protein.toFixed(1)))}g · C {fmtNum(Number(m.carbs.toFixed(1)))}g · G {fmtNum(Number(m.fat.toFixed(1)))}g
+                            </div>
+                          ) : (
+                            <div className="hist-detail" style={{ marginTop: 6 }}>Ingresá una cantidad válida de {proteinFood.name}.</div>
+                          )}
                           {fatSuggestion && <div className="hist-detail accent2" style={{ marginTop: 4 }}>{fatSuggestion}</div>}
-                          <button className="cancel-btn" style={{ width: "100%", marginTop: 8 }} onClick={() => logIdea(combo.title, m)}>
+                          <button className="cancel-btn" style={{ width: "100%", marginTop: 8 }} disabled={!m} onClick={() => logIdea(combo.title, m)}>
                             Cargar esta comida
                           </button>
                         </div>
                       );
                     })}
                   </div>
-                  <div className="section-sub" style={{ marginTop: 8 }}>Porciones de referencia — ajustá a ojo según tu hambre y lo que te quede del día.</div>
+                  <div className="section-sub" style={{ marginTop: 8 }}>Carbohidrato y verdura en porción de referencia — ajustá la proteína a lo que tengas.</div>
                   <button className="cancel-btn" style={{ width: "100%", marginTop: 8 }} onClick={() => setCycleSeedByMeal((prev) => ({ ...prev, [mealType]: (prev[mealType] || 0) + 1 }))}>
                     Otra idea
                   </button>
@@ -3521,7 +3557,10 @@ function PlateBuilder({ remainingKcal, remainingCarbs, addMeal, dateISO, mealTyp
   const [proteinQtyInput, setProteinQtyInput] = useState("");
   const [carbId, setCarbId] = useState("");
   const [carbQtyInput, setCarbQtyInput] = useState("");
-  const [vegId, setVegId] = useState("");
+  // Multiple guarniciones a la vez (no un unico dropdown): cada una con su
+  // propia cantidad editable en vegQtyById.
+  const [vegIds, setVegIds] = useState([]);
+  const [vegQtyById, setVegQtyById] = useState({});
 
   const proteinFood = FOOD_DB.find((f) => f.id === proteinId) || null;
   const proteinQty = toNum(proteinQtyInput);
@@ -3559,10 +3598,50 @@ function PlateBuilder({ remainingKcal, remainingCarbs, addMeal, dateISO, mealTyp
   const carbQty = toNum(carbQtyInput);
   const carbMacros = carbFood && carbQty != null && carbQty > 0 ? computeFoodMacros(carbId, carbQty) : null;
 
-  const vegFood = vegId ? FOOD_DB.find((f) => f.id === vegId) : null;
-  const vegMacros = vegFood ? computeFoodMacros(vegId, 100) : null;
+  // Margen que queda despues de proteina + carbohidrato, para repartir entre
+  // las verduras tildadas (mismo criterio que suggestedCarbGrams: el mas
+  // restrictivo entre kcal y carbohidratos, mismo tope de porcion realista).
+  const marginKcalForVeg = remainingKcal != null && proteinMacros != null ? remainingKcal - proteinMacros.kcal - (carbMacros?.kcal || 0) : null;
+  const marginCarbsForVeg = remainingCarbs != null && proteinMacros != null ? remainingCarbs - proteinMacros.carbs - (carbMacros?.carbs || 0) : null;
 
-  const totalMacros = [proteinMacros, carbMacros, vegMacros].filter(Boolean).reduce(
+  function suggestedVegGrams(food, countAfter) {
+    if (!food || countAfter <= 0) return null;
+    const kcalShare = marginKcalForVeg != null ? marginKcalForVeg / countAfter : null;
+    const carbsShare = marginCarbsForVeg != null ? marginCarbsForVeg / countAfter : null;
+    const byKcal = kcalShare != null ? (kcalShare / food.kcal) * 100 : Infinity;
+    const byCarbs = carbsShare != null ? (carbsShare / food.carbs) * 100 : Infinity;
+    return Math.round(Math.min(byKcal, byCarbs, MAX_SINGLE_PORTION_G) / 10) * 10;
+  }
+
+  // Al tildar una verdura, precarga su cantidad con la sugerencia calculada
+  // en ese momento (repartiendo el margen entre todas las ya tildadas). No
+  // se recalcula retroactivamente la de las que ya estaban tildadas -- igual
+  // criterio que usa el carbohidrato: sugerencia inicial editable, no se
+  // pelea con lo que el usuario ya haya tocado.
+  function toggleVeg(id) {
+    setVegIds((prev) => {
+      if (prev.includes(id)) return prev.filter((v) => v !== id);
+      const next = [...prev, id];
+      const food = FOOD_DB.find((f) => f.id === id);
+      const suggested = suggestedVegGrams(food, next.length);
+      setVegQtyById((q) => ({ ...q, [id]: toInput(Math.max(0, suggested ?? 100)) }));
+      return next;
+    });
+  }
+
+  const vegMacrosList = vegIds.map((id) => {
+    const food = FOOD_DB.find((f) => f.id === id);
+    const qtyInput = vegQtyById[id] ?? "";
+    const qty = toNum(qtyInput);
+    const macros = food && qty != null && qty > 0 ? computeFoodMacros(id, qty) : null;
+    return { id, food, qtyInput, qty, macros };
+  });
+  const vegMacrosTotal = vegMacrosList.reduce(
+    (acc, v) => (v.macros ? { kcal: acc.kcal + v.macros.kcal, protein: acc.protein + v.macros.protein, carbs: acc.carbs + v.macros.carbs, fat: acc.fat + v.macros.fat } : acc),
+    { kcal: 0, protein: 0, carbs: 0, fat: 0 }
+  );
+
+  const totalMacros = [proteinMacros, carbMacros, vegMacrosTotal].filter(Boolean).reduce(
     (acc, m) => ({ kcal: acc.kcal + m.kcal, protein: acc.protein + m.protein, carbs: acc.carbs + m.carbs, fat: acc.fat + m.fat }),
     { kcal: 0, protein: 0, carbs: 0, fat: 0 }
   );
@@ -3571,7 +3650,7 @@ function PlateBuilder({ remainingKcal, remainingCarbs, addMeal, dateISO, mealTyp
     const parts = [
       proteinFood ? `${fmtNum(proteinQty)}g de ${proteinFood.name}` : null,
       carbMacros && carbFood ? `${fmtNum(carbQty)}g de ${carbFood.name}` : null,
-      vegMacros && vegFood ? `100g de ${vegFood.name}` : null,
+      ...vegMacrosList.filter((v) => v.macros).map((v) => `${fmtNum(v.qty)}g de ${v.food.name}`),
     ].filter(Boolean);
     addMeal({
       date: dateISO,
@@ -3638,19 +3717,23 @@ function PlateBuilder({ remainingKcal, remainingCarbs, addMeal, dateISO, mealTyp
         </div>
       )}
 
-      <div className="verdict-food-picker" style={{ marginTop: 10 }}>
-        <span>Verdura (opcional)</span>
-        <div className="select-wrap select-wrap-sm">
-          <select className="select" value={vegId} onChange={(e) => setVegId(e.target.value)}>
-            <option value="">Sin verdura</option>
-            {VEG_FOODS.map((f) => (
-              <option key={f.id} value={f.id}>{f.name}</option>
-            ))}
-          </select>
-          <ChevronDown size={14} className="select-chevron" />
-        </div>
+      <div className="section-sub" style={{ marginTop: 10, marginBottom: 0 }}>Verdura (opcional, podés tildar varias)</div>
+      <div className="chiprow wrap" style={{ marginTop: 6 }}>
+        {VEG_FOODS.map((f) => (
+          <button key={f.id} className={"chip" + (vegIds.includes(f.id) ? " chip-active" : "")} onClick={() => toggleVeg(f.id)}>
+            {f.name}
+          </button>
+        ))}
       </div>
-      {vegId && <div className="section-sub" style={{ marginTop: 4, marginBottom: 0 }}>Porción de referencia: 100g.</div>}
+      {vegMacrosList.map((v) => (
+        <div key={v.id} className="verdict-food-picker" style={{ marginTop: 6 }}>
+          <span>Cantidad de {v.food.name}</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <NumInput value={v.qtyInput} onChange={(val) => setVegQtyById((q) => ({ ...q, [v.id]: val }))} />
+            <span className="section-sub" style={{ marginBottom: 0 }}>g</span>
+          </div>
+        </div>
+      ))}
 
       {totalMacros.kcal > 0 && (
         <div className="hist-detail mono" style={{ marginTop: 10 }}>
