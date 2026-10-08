@@ -4406,19 +4406,17 @@ function MealForm({ onSave, date, isToday, customFoods, addCustomFood, deleteCus
   const [customProtein, setCustomProtein] = useState("");
   const [customCarbs, setCustomCarbs] = useState("");
   const [customFat, setCustomFat] = useState("");
-  // Guardar permanentemente (custom_foods) ademas de agregarlo a esta comida:
-  // para eso hace falta saber para cuantos gramos son esos macros (asi se
-  // puede guardar en el mismo formato por-100g que el resto de FOOD_DB) y en
-  // que categoria mostrarlo despues en el selector.
+  // Guardar permanentemente (custom_foods) en vez de agregarlo a esta
+  // comida: "Guardar en mi lista" tildado cambia la accion del formulario --
+  // ya no carga nada en la comida de hoy, solo guarda el alimento (por-100g,
+  // usando customRefQty como referencia) para elegirlo despues desde el
+  // selector de arriba como cualquier otro alimento de la base. Guardar y
+  // registrar lo que se comio hoy son dos acciones separadas a proposito
+  // (igual que con los alimentos de base: primero existen en la lista,
+  // despues se cargan con cantidad cuando se los come).
   const [saveToList, setSaveToList] = useState(true);
   const [customCat, setCustomCat] = useState(FOOD_CATEGORIES[0]);
   const [customRefQty, setCustomRefQty] = useState("");
-  // Cuanto de ESO comio el usuario ahora -- NO tiene por que coincidir con
-  // customRefQty (ej. la etiqueta dice "por 100g" pero solo comio 50g). Sin
-  // este campo, lo que se cargaba en la comida de hoy terminaba siendo
-  // siempre la referencia completa tal cual se tipeo, sin importar cuanto
-  // dijera haber comido -- el bug reportado por el usuario.
-  const [customAteQty, setCustomAteQty] = useState("");
   const [savingCustom, setSavingCustom] = useState(false);
 
   const pickedFood = FOOD_DB.find((f) => f.id === pickFoodId);
@@ -4456,14 +4454,9 @@ function MealForm({ onSave, date, isToday, customFoods, addCustomFood, deleteCus
   // Si "Guardar en mi lista" esta tildado, los macros tipeados son una
   // REFERENCIA (ej. los de la etiqueta del producto, "por 100g" o la
   // porcion que diga el envase) -- se convierten a formato por-100g usando
-  // customRefQty, mismo formato que ya usa el resto de FOOD_DB. Lo que
-  // efectivamente se agrega a la comida de hoy se escala por separado segun
-  // customAteQty (cuanto comio realmente), que puede ser distinto.
+  // customRefQty, mismo formato que ya usa el resto de FOOD_DB.
   const customRefQtyNum = toNum(customRefQty);
-  const customAteQtyNum = toNum(customAteQty);
-  const canSaveCustom = saveToList
-    ? customRefQtyNum != null && customRefQtyNum > 0 && customAteQtyNum != null && customAteQtyNum > 0
-    : true;
+  const canSaveCustom = saveToList ? customRefQtyNum != null && customRefQtyNum > 0 : true;
 
   async function addCustom() {
     if (!customName.trim() || !canSaveCustom || savingCustom) return;
@@ -4473,35 +4466,28 @@ function MealForm({ onSave, date, isToday, customFoods, addCustomFood, deleteCus
     const fat = toNum(customFat) || 0;
 
     if (saveToList) {
-      const per100g = {
-        kcal: Number((kcal * (100 / customRefQtyNum)).toFixed(1)),
-        protein: Number((protein * (100 / customRefQtyNum)).toFixed(1)),
-        carbs: Number((carbs * (100 / customRefQtyNum)).toFixed(1)),
-        fat: Number((fat * (100 / customRefQtyNum)).toFixed(1)),
-      };
-      const ateFactor = customAteQtyNum / 100;
-      setItems((prev) => [
-        ...prev,
-        {
-          id: uid(),
-          label: `${fmtNum(customAteQtyNum)} g de ${customName.trim()}`,
-          kcal: Math.round(per100g.kcal * ateFactor),
-          protein: Number((per100g.protein * ateFactor).toFixed(1)),
-          carbs: Number((per100g.carbs * ateFactor).toFixed(1)),
-          fat: Number((per100g.fat * ateFactor).toFixed(1)),
-        },
-      ]);
+      // Solo guarda el alimento -- no toca la comida de hoy. Para cargarlo
+      // hoy se elige despues desde el selector de arriba, con su cantidad,
+      // como cualquier otro alimento de la base.
+      const factor = 100 / customRefQtyNum;
       setSavingCustom(true);
-      await addCustomFood({ name: customName.trim(), cat: customCat, ...per100g });
+      await addCustomFood({
+        name: customName.trim(),
+        cat: customCat,
+        kcal: Number((kcal * factor).toFixed(1)),
+        protein: Number((protein * factor).toFixed(1)),
+        carbs: Number((carbs * factor).toFixed(1)),
+        fat: Number((fat * factor).toFixed(1)),
+      });
       setSavingCustom(false);
     } else {
       // Sin guardar permanente: los valores tipeados son el total de lo que
-      // se esta comiendo ahora, tal cual -- no hace falta ninguna referencia.
+      // se esta comiendo ahora, tal cual -- se agrega directo a esta comida.
       setItems((prev) => [...prev, { id: uid(), label: customName.trim(), kcal, protein, carbs, fat }]);
     }
 
     setCustomName(""); setCustomKcal(""); setCustomProtein(""); setCustomCarbs(""); setCustomFat("");
-    setCustomRefQty(""); setCustomAteQty(""); setCustomOpen(false);
+    setCustomRefQty(""); setCustomOpen(false);
   }
 
   function removeItem(id) {
@@ -4597,10 +4583,10 @@ function MealForm({ onSave, date, isToday, customFoods, addCustomFood, deleteCus
 
           <label className="uni-toggle" style={{ marginTop: 10 }}>
             <input type="checkbox" checked={saveToList} onChange={(e) => setSaveToList(e.target.checked)} />
-            <span>Guardar en mi lista de alimentos para usar después</span>
+            <span>Guardar en mi lista de alimentos (no lo carga en esta comida)</span>
           </label>
 
-          {saveToList && (
+          {saveToList ? (
             <>
               <div className="side-grid two" style={{ marginTop: 6 }}>
                 <div className="select-wrap">
@@ -4614,23 +4600,17 @@ function MealForm({ onSave, date, isToday, customFoods, addCustomFood, deleteCus
                 <NumInput placeholder="¿Para cuántos gramos?" decimal={false} value={customRefQty} onChange={setCustomRefQty} />
               </div>
               <div className="section-sub" style={{ marginTop: 4, marginBottom: 0 }}>
-                Los valores de arriba (kcal/proteína/carbos/grasas) son la referencia para esta cantidad — ej. lo que dice la etiqueta del producto. No hace falta que coincida con lo que comiste ahora.
-              </div>
-              <div className="verdict-food-picker" style={{ marginTop: 10 }}>
-                <span>¿Cuánto comiste vos ahora?</span>
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <NumInput value={customAteQty} onChange={setCustomAteQty} decimal={false} />
-                  <span className="section-sub" style={{ marginBottom: 0 }}>g</span>
-                </div>
-              </div>
-              <div className="section-sub" style={{ marginTop: 4, marginBottom: 0 }}>
-                Esta cantidad es la que se carga a la comida de hoy — el alimento queda guardado en tu lista según la referencia de arriba, usable después en cualquier cantidad.
+                Los valores de arriba (kcal/proteína/carbos/grasas) son la referencia para esta cantidad — ej. lo que dice la etiqueta del producto. Esto solo guarda el alimento en tu lista; para cargarlo hoy, elegilo después en el selector de arriba con la cantidad que comiste, como cualquier otro alimento.
               </div>
             </>
+          ) : (
+            <div className="section-sub" style={{ marginTop: 4, marginBottom: 0 }}>
+              Sin tildar: los valores de arriba se agregan tal cual a esta comida, sin guardar nada para después.
+            </div>
           )}
 
           <button className="save-btn" disabled={!customName.trim() || !canSaveCustom || savingCustom} onClick={addCustom}>
-            {savingCustom ? "Guardando..." : "Agregar a la comida"}
+            {savingCustom ? "Guardando..." : saveToList ? "Guardar alimento" : "Agregar a la comida"}
           </button>
         </div>
       )}
