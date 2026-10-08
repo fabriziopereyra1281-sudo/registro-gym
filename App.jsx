@@ -274,6 +274,21 @@ function mapMealRow(row) {
     notes: row.notes,
   };
 }
+// Mismo formato que un alimento de FOOD_DB (siempre por 100g, "unit" fijo en
+// false -- ver nota en custom_foods de supabase-setup.sql) para que se pueda
+// mezclar directo en la lista con syncFoodDb sin transformar nada mas.
+function mapCustomFoodRow(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    cat: row.cat,
+    unit: false,
+    kcal: row.kcal,
+    protein: row.protein,
+    carbs: row.carbs,
+    fat: row.fat,
+  };
+}
 
 const MEAL_TYPES = ["Desayuno", "Almuerzo", "Merienda", "Cena", "Pre-entreno", "Post-entreno", "Otro"];
 
@@ -282,7 +297,7 @@ const MEAL_TYPES = ["Desayuno", "Almuerzo", "Merienda", "Cena", "Pre-entreno", "
 // en vez de por gramos -- en ese caso kcal/protein/carbs/fat ya son los de
 // UNA de esas porciones, no de 100g. Es lo que permite calcular solo, sin
 // que el usuario tenga que saber cuanta proteina tiene nada.
-const FOOD_DB = [
+const FOOD_DB_BUILTIN = [
   { id: "pollo", name: "Pechuga de pollo", cat: "Proteínas", unit: false, kcal: 165, protein: 31, carbs: 0, fat: 3.6 },
   { id: "carne_magra", name: "Carne magra (nalga/lomo)", cat: "Proteínas", unit: false, kcal: 190, protein: 29, carbs: 0, fat: 8 },
   { id: "carne_picada", name: "Carne picada magra", cat: "Proteínas", unit: false, kcal: 210, protein: 26, carbs: 0, fat: 11 },
@@ -319,6 +334,23 @@ const FOOD_DB = [
   { id: "brocoli", name: "Brócoli cocido", cat: "Verduras", unit: false, kcal: 35, protein: 2.4, carbs: 7, fat: 0.4 },
   { id: "espinaca", name: "Espinaca cocida", cat: "Verduras", unit: false, kcal: 23, protein: 2.9, carbs: 3.6, fat: 0.4 },
 ];
+
+// FOOD_DB arranca igual al built-in de siempre, pero se re-sincroniza (ver
+// syncFoodDb, llamado en el render de App con los alimentos guardados del
+// usuario) para incluir los que el usuario cargo manualmente y decidio
+// guardar -- "let" en vez de "const" porque la lista completa se reemplaza
+// cada vez que cambia, no se muta en el lugar. Todo lo que ya hace
+// FOOD_DB.find/FOOD_DB.filter en el momento de renderizar (computeFoodMacros,
+// el selector de MealForm, etc.) ve los alimentos guardados sin que haga
+// falta tocar esas funciones una por una.
+let FOOD_DB = FOOD_DB_BUILTIN;
+function syncFoodDb(customFoods) {
+  FOOD_DB = customFoods.length ? [...FOOD_DB_BUILTIN, ...customFoods] : FOOD_DB_BUILTIN;
+}
+// Categorias fijas (no texto libre): un alimento guardado por el usuario
+// elige una de estas mismas, asi nunca hace falta recalcular la lista de
+// categorias del selector de MealForm cuando se guarda uno nuevo.
+const FOOD_CATEGORIES = [...new Set(FOOD_DB_BUILTIN.map((f) => f.cat))];
 
 function computeFoodMacros(foodId, qty) {
   const food = FOOD_DB.find((f) => f.id === foodId);
@@ -559,6 +591,11 @@ export default function App() {
   const [coachNote, setCoachNote] = useState(null);
   const [dailySuggestion, setDailySuggestion] = useState(null);
   const [dailySuggestionLoading, setDailySuggestionLoading] = useState(false);
+  const [customFoods, setCustomFoods] = useState([]);
+  // Re-sincroniza FOOD_DB en cada render (no en un efecto): asi, para cuando
+  // los componentes hijos (MealForm, etc.) renderizan en esta misma pasada,
+  // ya ven los alimentos guardados -- un efecto llegaria un render tarde.
+  syncFoodDb(customFoods);
   const [dataLoaded, setDataLoaded] = useState(false);
   const [openForm, setOpenForm] = useState(null);
   const [editMode, setEditMode] = useState(false);
@@ -688,6 +725,7 @@ export default function App() {
         setSupplements([]);
         setSupplementLogs([]);
         setDailySuggestion(null);
+        setCustomFoods([]);
         setDataLoaded(false);
       }
     });
@@ -733,6 +771,12 @@ export default function App() {
     // para no perderla al recargar la página.
     const { data: dailySuggestionRow } = await supabase
       .from("daily_suggestions").select("*").eq("user_id", userId).eq("date", todayISO()).maybeSingle();
+    // Alimentos cargados a mano y guardados por el usuario (ver addCustomFood
+    // / "Cargar manual" en MealForm) -- se mezclan en FOOD_DB mas abajo en el
+    // render de App (syncFoodDb) para que aparezcan en el mismo selector que
+    // los de base, sin tener que tocar codigo.
+    const { data: customFoodRows } = await supabase
+      .from("custom_foods").select("*").eq("user_id", userId).order("created_at", { ascending: true });
 
     setConfig(cfg);
     setLogs(mergeOfflineQueue("workout_logs", logRows || [], mapLogRow));
@@ -746,6 +790,7 @@ export default function App() {
     setSupplementLogs((supplementLogRows || []).map(mapSupplementLogRow));
     setCoachNote(mapCoachNoteRow(noteRow));
     setDailySuggestion(mapDailySuggestionRow(dailySuggestionRow));
+    setCustomFoods((customFoodRows || []).map(mapCustomFoodRow));
     setDataLoaded(true);
   }
 
@@ -965,6 +1010,36 @@ export default function App() {
   async function deleteMeal(id) {
     await supabase.from("meal_logs").delete().eq("id", id);
     setMealLogs((prev) => prev.filter((m) => m.id !== id));
+  }
+
+  // Guarda en custom_foods un alimento cargado a mano en "Cargar manual" (ver
+  // MealForm) para que quede disponible la proxima vez sin tener que volver a
+  // tipearlo -- a diferencia de addMeal, esto no registra nada comido, solo
+  // agrega el alimento a la lista. entry ya viene en formato por 100g (ver
+  // toCustomFoodEntry en MealForm).
+  async function addCustomFood(entry) {
+    const row = {
+      user_id: session.user.id,
+      name: entry.name,
+      cat: entry.cat,
+      kcal: entry.kcal,
+      protein: entry.protein,
+      carbs: entry.carbs,
+      fat: entry.fat,
+    };
+    const { data, error } = await supabase.from("custom_foods").insert(row).select().single();
+    if (!error && data) {
+      setCustomFoods((prev) => [...prev, mapCustomFoodRow(data)]);
+      showToast("Alimento guardado en tu lista");
+      return true;
+    }
+    showToast("No se pudo guardar el alimento: " + (error?.message || "error desconocido"));
+    return false;
+  }
+
+  async function deleteCustomFood(id) {
+    await supabase.from("custom_foods").delete().eq("id", id);
+    setCustomFoods((prev) => prev.filter((f) => f.id !== id));
   }
 
   // Sugerencia del dia con IA (boton "¿Como va mi dia?" en Nutricion). Los
@@ -1356,6 +1431,9 @@ export default function App() {
               dailySuggestion={dailySuggestion}
               dailySuggestionLoading={dailySuggestionLoading}
               onGenerateDailySuggestion={generateDailySuggestion}
+              customFoods={customFoods}
+              addCustomFood={addCustomFood}
+              deleteCustomFood={deleteCustomFood}
             />
           ) : (
             <CoachTab
@@ -3248,7 +3326,7 @@ function DailySuggestionCard({ targets, totals, mealsToday, suggestion, loading,
   );
 }
 
-function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwLogs, logs, config, activityLogs, dailySuggestion, dailySuggestionLoading, onGenerateDailySuggestion }) {
+function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwLogs, logs, config, activityLogs, dailySuggestion, dailySuggestionLoading, onGenerateDailySuggestion, customFoods, addCustomFood, deleteCustomFood }) {
   // Que dia se esta viendo/cargando: por defecto hoy, pero se puede mover a
   // cualquier dia anterior (ej. para cargar una cena de madrugada que quedo
   // sin registrar, o completar comidas de ayer). Nunca se permite ir a futuro.
@@ -3377,7 +3455,14 @@ function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwL
         )}
       </section>
 
-      <MealForm onSave={addMeal} date={selectedDate} isToday={isToday} />
+      <MealForm
+        onSave={addMeal}
+        date={selectedDate}
+        isToday={isToday}
+        customFoods={customFoods}
+        addCustomFood={addCustomFood}
+        deleteCustomFood={deleteCustomFood}
+      />
 
       {selectedMeals.length > 0 && (
         <section className="card">
@@ -4298,7 +4383,7 @@ function GoalCard({ targets, onSave, latestWeight, latestWaist }) {
   );
 }
 
-function MealForm({ onSave, date, isToday }) {
+function MealForm({ onSave, date, isToday, customFoods, addCustomFood, deleteCustomFood }) {
   const [mealType, setMealType] = useState(null);
   const [items, setItems] = useState([]);
   const [notes, setNotes] = useState("");
@@ -4310,8 +4395,15 @@ function MealForm({ onSave, date, isToday }) {
   const [customProtein, setCustomProtein] = useState("");
   const [customCarbs, setCustomCarbs] = useState("");
   const [customFat, setCustomFat] = useState("");
+  // Guardar permanentemente (custom_foods) ademas de agregarlo a esta comida:
+  // para eso hace falta saber para cuantos gramos son esos macros (asi se
+  // puede guardar en el mismo formato por-100g que el resto de FOOD_DB) y en
+  // que categoria mostrarlo despues en el selector.
+  const [saveToList, setSaveToList] = useState(true);
+  const [customCat, setCustomCat] = useState(FOOD_CATEGORIES[0]);
+  const [customRefQty, setCustomRefQty] = useState("");
+  const [savingCustom, setSavingCustom] = useState(false);
 
-  const categories = useMemo(() => [...new Set(FOOD_DB.map((f) => f.cat))], []);
   const pickedFood = FOOD_DB.find((f) => f.id === pickFoodId);
 
   const totals = useMemo(
@@ -4338,20 +4430,34 @@ function MealForm({ onSave, date, isToday }) {
     setPickQty("");
   }
 
-  function addCustom() {
-    if (!customName.trim()) return;
-    setItems((prev) => [
-      ...prev,
-      {
-        id: uid(),
-        label: customName.trim(),
-        kcal: toNum(customKcal) || 0,
-        protein: toNum(customProtein) || 0,
-        carbs: toNum(customCarbs) || 0,
-        fat: toNum(customFat) || 0,
-      },
-    ]);
-    setCustomName(""); setCustomKcal(""); setCustomProtein(""); setCustomCarbs(""); setCustomFat(""); setCustomOpen(false);
+  // Si "Guardar en mi lista" esta tildado, estos mismos macros (que el
+  // usuario carga como el total de lo que esta comiendo ahora) se convierten
+  // a formato por-100g usando customRefQty como referencia -- mismo formato
+  // que ya usa el resto de FOOD_DB, asi se puede usar con cantidad despues.
+  const customRefQtyNum = toNum(customRefQty);
+  const canSaveCustom = saveToList ? customRefQtyNum != null && customRefQtyNum > 0 : true;
+
+  async function addCustom() {
+    if (!customName.trim() || !canSaveCustom || savingCustom) return;
+    const kcal = toNum(customKcal) || 0;
+    const protein = toNum(customProtein) || 0;
+    const carbs = toNum(customCarbs) || 0;
+    const fat = toNum(customFat) || 0;
+    setItems((prev) => [...prev, { id: uid(), label: customName.trim(), kcal, protein, carbs, fat }]);
+    if (saveToList && customRefQtyNum > 0) {
+      setSavingCustom(true);
+      const factor = 100 / customRefQtyNum;
+      await addCustomFood({
+        name: customName.trim(),
+        cat: customCat,
+        kcal: Number((kcal * factor).toFixed(1)),
+        protein: Number((protein * factor).toFixed(1)),
+        carbs: Number((carbs * factor).toFixed(1)),
+        fat: Number((fat * factor).toFixed(1)),
+      });
+      setSavingCustom(false);
+    }
+    setCustomName(""); setCustomKcal(""); setCustomProtein(""); setCustomCarbs(""); setCustomFat(""); setCustomRefQty(""); setCustomOpen(false);
   }
 
   function removeItem(id) {
@@ -4395,7 +4501,7 @@ function MealForm({ onSave, date, isToday }) {
       <div className="side-grid two">
         <div className="select-wrap">
           <select className="select" value={pickFoodId} onChange={(e) => setPickFoodId(e.target.value)}>
-            {categories.map((cat) => (
+            {FOOD_CATEGORIES.map((cat) => (
               <optgroup key={cat} label={cat}>
                 {FOOD_DB.filter((f) => f.cat === cat).map((f) => (
                   <option key={f.id} value={f.id}>{f.name}</option>
@@ -4430,7 +4536,55 @@ function MealForm({ onSave, date, isToday }) {
             <NumInput placeholder="Carbohidratos (g)" value={customCarbs} onChange={setCustomCarbs} />
             <NumInput placeholder="Grasas (g)" value={customFat} onChange={setCustomFat} />
           </div>
-          <button className="save-btn" onClick={addCustom}>Agregar a la comida</button>
+
+          <label className="uni-toggle" style={{ marginTop: 10 }}>
+            <input type="checkbox" checked={saveToList} onChange={(e) => setSaveToList(e.target.checked)} />
+            <span>Guardar en mi lista de alimentos para usar después</span>
+          </label>
+
+          {saveToList && (
+            <>
+              <div className="side-grid two" style={{ marginTop: 6 }}>
+                <div className="select-wrap">
+                  <select className="select" value={customCat} onChange={(e) => setCustomCat(e.target.value)}>
+                    {FOOD_CATEGORIES.map((cat) => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                  </select>
+                  <ChevronDown size={16} className="select-chevron" />
+                </div>
+                <NumInput placeholder="¿Para cuántos gramos?" decimal={false} value={customRefQty} onChange={setCustomRefQty} />
+              </div>
+              <div className="section-sub" style={{ marginTop: 4, marginBottom: 0 }}>
+                Ej: si cargaste arriba los valores de 250g de algo, poné 250 — así después lo podés cargar en cualquier cantidad, como cualquier otro alimento de la lista.
+              </div>
+            </>
+          )}
+
+          <button className="save-btn" disabled={!customName.trim() || !canSaveCustom || savingCustom} onClick={addCustom}>
+            {savingCustom ? "Guardando..." : "Agregar a la comida"}
+          </button>
+        </div>
+      )}
+
+      {customFoods.length > 0 && (
+        <div className="card-form" style={{ marginTop: 10 }}>
+          <div className="section-sub" style={{ marginBottom: 4 }}>Tus alimentos guardados</div>
+          <div className="cardlist">
+            {customFoods.map((f) => (
+              <div key={f.id} className="hist-row">
+                <div>
+                  <div className="hist-ex">{f.name}</div>
+                  <div className="hist-detail mono">
+                    {fmtNum(f.kcal)} kcal · P {fmtNum(f.protein)}g · C {fmtNum(f.carbs)}g · G {fmtNum(f.fat)}g <span className="section-sub" style={{ marginBottom: 0 }}>(por 100g)</span>
+                  </div>
+                </div>
+                <div className="hist-actions">
+                  <button className="del-btn" onClick={() => deleteCustomFood(f.id)}><Trash2 size={15} /></button>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
