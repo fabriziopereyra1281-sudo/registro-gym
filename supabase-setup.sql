@@ -269,3 +269,28 @@ alter table daily_suggestions enable row level security;
 drop policy if exists "own_daily_suggestions" on daily_suggestions;
 create policy "own_daily_suggestions" on daily_suggestions
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- Alimentos que el usuario carga a mano desde "¿No está en la lista? Cargar
+-- manual" en Nueva comida y decide guardar para la proxima vez. Mismo formato
+-- que la base de alimentos fija del codigo (FOOD_DB en App.jsx): kcal/
+-- protein/carbs/fat son siempre por 100g (sin soporte para "por unidad" en
+-- esta primera version). La app los mezcla en memoria con FOOD_DB al cargar
+-- la sesion, asi aparecen en el mismo selector que los alimentos de base sin
+-- tener que tocar codigo.
+create table if not exists custom_foods (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users not null,
+  name text not null,
+  cat text not null,
+  kcal numeric not null,
+  protein numeric not null default 0,
+  carbs numeric not null default 0,
+  fat numeric not null default 0,
+  created_at timestamptz default now()
+);
+
+alter table custom_foods enable row level security;
+
+drop policy if exists "own_custom_foods" on custom_foods;
+create policy "own_custom_foods" on custom_foods
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
