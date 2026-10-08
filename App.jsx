@@ -305,28 +305,28 @@ const FOOD_DB_BUILTIN = [
   { id: "cerdo", name: "Bife de cerdo", cat: "Proteínas", unit: false, kcal: 210, protein: 26, carbs: 0, fat: 11 },
   { id: "matambre_vaca", name: "Matambre de vaca", cat: "Proteínas", unit: false, kcal: 230, protein: 27, carbs: 0, fat: 13 },
   { id: "matambre_cerdo", name: "Matambre de cerdo", cat: "Proteínas", unit: false, kcal: 270, protein: 20, carbs: 0, fat: 20 },
-  { id: "huevo", name: "Huevo entero", cat: "Proteínas", unit: true, unitWord: "unidad", unitWordPlural: "unidades", kcal: 70, protein: 6, carbs: 0.5, fat: 5 },
-  { id: "clara_huevo", name: "Clara de huevo", cat: "Proteínas", unit: true, unitWord: "unidad", unitWordPlural: "unidades", kcal: 17, protein: 3.6, carbs: 0.2, fat: 0.1 },
+  { id: "huevo", name: "Huevo entero", cat: "Proteínas", unit: true, unitWord: "unidad", unitWordPlural: "unidades", gramsPerUnit: 50, kcal: 70, protein: 6, carbs: 0.5, fat: 5 },
+  { id: "clara_huevo", name: "Clara de huevo", cat: "Proteínas", unit: true, unitWord: "unidad", unitWordPlural: "unidades", gramsPerUnit: 33, kcal: 17, protein: 3.6, carbs: 0.2, fat: 0.1 },
   { id: "atun", name: "Atún al natural", cat: "Proteínas", unit: false, kcal: 116, protein: 26, carbs: 0, fat: 1 },
   { id: "pescado", name: "Merluza / pescado blanco", cat: "Proteínas", unit: false, kcal: 90, protein: 19, carbs: 0, fat: 1 },
   { id: "yogur_griego", name: "Yogur griego natural", cat: "Proteínas", unit: false, kcal: 65, protein: 10, carbs: 4, fat: 2 },
   { id: "queso_cottage", name: "Queso cottage / fresco", cat: "Proteínas", unit: false, kcal: 98, protein: 11, carbs: 3, fat: 4 },
-  { id: "queso_blanco_0", name: "Queso blanco descremado (0% grasa)", cat: "Proteínas", unit: true, unitWord: "cucharada", unitWordPlural: "cucharadas", kcal: 7, protein: 1.2, carbs: 0.6, fat: 0 },
-  { id: "whey", name: "Whey proteína", cat: "Proteínas", unit: true, unitWord: "scoop", unitWordPlural: "scoops", kcal: 120, protein: 24, carbs: 3, fat: 1 },
+  { id: "queso_blanco_0", name: "Queso blanco descremado (0% grasa)", cat: "Proteínas", unit: true, unitWord: "cucharada", unitWordPlural: "cucharadas", gramsPerUnit: 15, kcal: 7, protein: 1.2, carbs: 0.6, fat: 0 },
+  { id: "whey", name: "Whey proteína", cat: "Proteínas", unit: true, unitWord: "scoop", unitWordPlural: "scoops", gramsPerUnit: 30, kcal: 120, protein: 24, carbs: 3, fat: 1 },
   { id: "arroz", name: "Arroz blanco cocido", cat: "Carbohidratos", unit: false, kcal: 130, protein: 2.7, carbs: 28, fat: 0.3 },
-  { id: "avena", name: "Avena", cat: "Carbohidratos", unit: true, unitWord: "porción de 40 g", unitWordPlural: "porciones de 40 g", kcal: 150, protein: 5, carbs: 27, fat: 3 },
+  { id: "avena", name: "Avena", cat: "Carbohidratos", unit: true, unitWord: "porción de 40 g", unitWordPlural: "porciones de 40 g", gramsPerUnit: 40, kcal: 150, protein: 5, carbs: 27, fat: 3 },
   { id: "papa", name: "Papa cocida", cat: "Carbohidratos", unit: false, kcal: 87, protein: 2, carbs: 20, fat: 0 },
   { id: "batata", name: "Batata cocida", cat: "Carbohidratos", unit: false, kcal: 86, protein: 1.6, carbs: 20, fat: 0.1 },
-  { id: "pan_integral", name: "Pan integral", cat: "Carbohidratos", unit: true, unitWord: "rebanada", unitWordPlural: "rebanadas", kcal: 75, protein: 3, carbs: 13, fat: 1 },
-  { id: "pan_lactal", name: "Pan lactal blanco", cat: "Carbohidratos", unit: true, unitWord: "rebanada", unitWordPlural: "rebanadas", kcal: 65, protein: 2, carbs: 12, fat: 1 },
+  { id: "pan_integral", name: "Pan integral", cat: "Carbohidratos", unit: true, unitWord: "rebanada", unitWordPlural: "rebanadas", gramsPerUnit: 28, kcal: 75, protein: 3, carbs: 13, fat: 1 },
+  { id: "pan_lactal", name: "Pan lactal blanco", cat: "Carbohidratos", unit: true, unitWord: "rebanada", unitWordPlural: "rebanadas", gramsPerUnit: 25, kcal: 65, protein: 2, carbs: 12, fat: 1 },
   { id: "fideos", name: "Fideos cocidos", cat: "Carbohidratos", unit: false, kcal: 158, protein: 5.8, carbs: 31, fat: 0.9 },
-  { id: "galleta_arroz", name: "Galleta de arroz", cat: "Carbohidratos", unit: true, unitWord: "unidad", unitWordPlural: "unidades", kcal: 35, protein: 0.7, carbs: 7.5, fat: 0.3 },
-  { id: "banana", name: "Banana", cat: "Carbohidratos", unit: true, unitWord: "unidad", unitWordPlural: "unidades", kcal: 105, protein: 1.3, carbs: 27, fat: 0.4 },
-  { id: "manzana", name: "Manzana", cat: "Carbohidratos", unit: true, unitWord: "unidad", unitWordPlural: "unidades", kcal: 95, protein: 0.5, carbs: 25, fat: 0.3 },
-  { id: "aceite_oliva", name: "Aceite de oliva", cat: "Grasas", unit: true, unitWord: "cucharada", unitWordPlural: "cucharadas", kcal: 120, protein: 0, carbs: 0, fat: 14 },
-  { id: "palta", name: "Palta", cat: "Grasas", unit: true, unitWord: "mitad", unitWordPlural: "mitades", kcal: 160, protein: 2, carbs: 8.5, fat: 15 },
-  { id: "almendras", name: "Almendras / nueces", cat: "Grasas", unit: true, unitWord: "puñado de 20 g", unitWordPlural: "puñados de 20 g", kcal: 120, protein: 4, carbs: 4, fat: 11 },
-  { id: "mani", name: "Manteca de maní", cat: "Grasas", unit: true, unitWord: "cucharada", unitWordPlural: "cucharadas", kcal: 95, protein: 4, carbs: 3, fat: 8 },
+  { id: "galleta_arroz", name: "Galleta de arroz", cat: "Carbohidratos", unit: true, unitWord: "unidad", unitWordPlural: "unidades", gramsPerUnit: 9, kcal: 35, protein: 0.7, carbs: 7.5, fat: 0.3 },
+  { id: "banana", name: "Banana", cat: "Carbohidratos", unit: true, unitWord: "unidad", unitWordPlural: "unidades", gramsPerUnit: 118, kcal: 105, protein: 1.3, carbs: 27, fat: 0.4 },
+  { id: "manzana", name: "Manzana", cat: "Carbohidratos", unit: true, unitWord: "unidad", unitWordPlural: "unidades", gramsPerUnit: 182, kcal: 95, protein: 0.5, carbs: 25, fat: 0.3 },
+  { id: "aceite_oliva", name: "Aceite de oliva", cat: "Grasas", unit: true, unitWord: "cucharada", unitWordPlural: "cucharadas", gramsPerUnit: 14, kcal: 120, protein: 0, carbs: 0, fat: 14 },
+  { id: "palta", name: "Palta", cat: "Grasas", unit: true, unitWord: "mitad", unitWordPlural: "mitades", gramsPerUnit: 100, kcal: 160, protein: 2, carbs: 8.5, fat: 15 },
+  { id: "almendras", name: "Almendras / nueces", cat: "Grasas", unit: true, unitWord: "puñado de 20 g", unitWordPlural: "puñados de 20 g", gramsPerUnit: 20, kcal: 120, protein: 4, carbs: 4, fat: 11 },
+  { id: "mani", name: "Manteca de maní", cat: "Grasas", unit: true, unitWord: "cucharada", unitWordPlural: "cucharadas", gramsPerUnit: 16, kcal: 95, protein: 4, carbs: 3, fat: 8 },
   { id: "zanahoria", name: "Zanahoria cocida", cat: "Verduras", unit: false, kcal: 35, protein: 0.8, carbs: 8, fat: 0.2 },
   { id: "zapallo_anco", name: "Zapallo (anco / brasilero) cocido", cat: "Verduras", unit: false, kcal: 40, protein: 1, carbs: 10, fat: 0.1 },
   { id: "zapallo_verde", name: "Zapallo verde / zapallito cocido", cat: "Verduras", unit: false, kcal: 20, protein: 1.2, carbs: 3.5, fat: 0.3 },
@@ -352,10 +352,17 @@ function syncFoodDb(customFoods) {
 // categorias del selector de MealForm cuando se guarda uno nuevo.
 const FOOD_CATEGORIES = [...new Set(FOOD_DB_BUILTIN.map((f) => f.cat))];
 
-function computeFoodMacros(foodId, qty) {
+// asGrams: para un alimento por porcion (unit:true) que ademas tiene
+// gramsPerUnit cargado, permite interpretar qty como gramos pesados en vez
+// de cantidad de porciones (ej. peso 10g de aceite en vez de estimar
+// "0,7 cucharadas"). Sin este 3er argumento (el default en todo el resto
+// del codigo) el comportamiento es exactamente el de siempre. Si el
+// alimento no tiene gramsPerUnit cargado, cae de vuelta al comportamiento
+// por porcion en vez de calcular un numero inventado.
+function computeFoodMacros(foodId, qty, { asGrams = false } = {}) {
   const food = FOOD_DB.find((f) => f.id === foodId);
   if (!food || !qty || qty <= 0) return null;
-  const factor = food.unit ? qty : qty / 100;
+  const factor = asGrams && food.unit && food.gramsPerUnit ? qty / food.gramsPerUnit : food.unit ? qty : qty / 100;
   return {
     kcal: Math.round(food.kcal * factor),
     protein: Number((food.protein * factor).toFixed(1)),
@@ -4389,6 +4396,10 @@ function MealForm({ onSave, date, isToday, customFoods, addCustomFood, deleteCus
   const [notes, setNotes] = useState("");
   const [pickFoodId, setPickFoodId] = useState(FOOD_DB[0].id);
   const [pickQty, setPickQty] = useState("");
+  // Para un alimento por porcion con peso de referencia conocido
+  // (gramsPerUnit), permite cargar la cantidad pesada en gramos en vez de
+  // estimar porciones -- util cuando el usuario lo pesa directo.
+  const [pickByGrams, setPickByGrams] = useState(false);
   const [customOpen, setCustomOpen] = useState(false);
   const [customName, setCustomName] = useState("");
   const [customKcal, setCustomKcal] = useState("");
@@ -4420,12 +4431,18 @@ function MealForm({ onSave, date, isToday, customFoods, addCustomFood, deleteCus
     [items]
   );
 
+  const canPickByGrams = pickedFood.unit && pickedFood.gramsPerUnit != null;
+  const pickingByGrams = canPickByGrams && pickByGrams;
+
   function addFromDb() {
     const qty = toNum(pickQty);
-    const m = computeFoodMacros(pickFoodId, qty);
+    const m = computeFoodMacros(pickFoodId, qty, { asGrams: pickingByGrams });
     if (!m) return;
-    const word = qty === 1 ? pickedFood.unitWord : pickedFood.unitWordPlural;
-    const label = pickedFood.unit ? `${fmtNum(qty)} ${word} de ${pickedFood.name}` : `${fmtNum(qty)} g de ${pickedFood.name}`;
+    const label = pickingByGrams
+      ? `${fmtNum(qty)} g de ${pickedFood.name}`
+      : pickedFood.unit
+      ? `${fmtNum(qty)} ${qty === 1 ? pickedFood.unitWord : pickedFood.unitWordPlural} de ${pickedFood.name}`
+      : `${fmtNum(qty)} g de ${pickedFood.name}`;
     setItems((prev) => [...prev, { id: uid(), label, ...m }]);
     setPickQty("");
   }
@@ -4500,7 +4517,11 @@ function MealForm({ onSave, date, isToday, customFoods, addCustomFood, deleteCus
 
       <div className="side-grid two">
         <div className="select-wrap">
-          <select className="select" value={pickFoodId} onChange={(e) => setPickFoodId(e.target.value)}>
+          <select
+            className="select"
+            value={pickFoodId}
+            onChange={(e) => { setPickFoodId(e.target.value); setPickByGrams(false); setPickQty(""); }}
+          >
             {FOOD_CATEGORIES.map((cat) => (
               <optgroup key={cat} label={cat}>
                 {FOOD_DB.filter((f) => f.cat === cat).map((f) => (
@@ -4512,11 +4533,21 @@ function MealForm({ onSave, date, isToday, customFoods, addCustomFood, deleteCus
           <ChevronDown size={16} className="select-chevron" />
         </div>
         <NumInput
-          placeholder={pickedFood.unit ? `Cant. (${pickedFood.unitWordPlural})` : "Gramos"}
+          placeholder={pickingByGrams ? "Gramos pesados" : pickedFood.unit ? `Cant. (${pickedFood.unitWordPlural})` : "Gramos"}
           value={pickQty}
           onChange={setPickQty}
         />
       </div>
+      {canPickByGrams && (
+        <div className="chiprow" style={{ marginTop: 8 }}>
+          <button className={"chip" + (!pickByGrams ? " chip-active" : "")} onClick={() => { setPickByGrams(false); setPickQty(""); }}>
+            Por porción
+          </button>
+          <button className={"chip" + (pickByGrams ? " chip-active" : "")} onClick={() => { setPickByGrams(true); setPickQty(""); }}>
+            Lo pesé (gramos)
+          </button>
+        </div>
+      )}
       <button className="save-btn" style={{ marginTop: 10, background: "rgba(192,138,62,0.16)", color: "#C08A3E" }} onClick={addFromDb}>
         + Agregar a la comida
       </button>
