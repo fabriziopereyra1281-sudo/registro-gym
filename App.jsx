@@ -677,6 +677,7 @@ export default function App() {
 
   async function updateLog(id, patch) {
     const row = {
+      date: patch.date,
       weight: patch.weight ?? null,
       reps: patch.reps ?? null,
       weight_r: patch.weightR ?? null,
@@ -686,7 +687,7 @@ export default function App() {
       rir: patch.rir ?? null,
     };
     const localPatch = {
-      weight: row.weight, reps: row.reps, weightR: row.weight_r, repsR: row.reps_r,
+      date: row.date, weight: row.weight, reps: row.reps, weightR: row.weight_r, repsR: row.reps_r,
       weightL: row.weight_l, repsL: row.reps_l, rir: row.rir,
     };
     // El set todavia no se mando al server (id temporal): el cambio se mergea
@@ -1647,6 +1648,13 @@ function HoyTab({
 }) {
   const day = config[selectedDay];
 
+  // Fecha con la que se guarda cada set nuevo -- independiente del dia de
+  // rutina elegido arriba (selectedDay: lun/mar/...), que sigue marcando
+  // QUE rutina mostrar/cargar sin importar la fecha elegida acá. Sirve para
+  // completar una sesion que quedo sin cargar (ej. cargarla al otro dia).
+  const [entryDate, setEntryDate] = useState(todayISO());
+  const isEntryToday = entryDate === todayISO();
+
   // Web Share API en celular (abre el picker nativo de apps); en desktop, o
   // si el usuario cancela el picker, no suele estar disponible -- se cae a
   // copiar al portapapeles.
@@ -1715,6 +1723,19 @@ function HoyTab({
         ))}
       </div>
 
+      <div className="date-nav">
+        <input
+          className="input date-nav-input"
+          type="date"
+          value={entryDate}
+          max={todayISO()}
+          onChange={(e) => e.target.value && setEntryDate(e.target.value)}
+        />
+        {!isEntryToday && (
+          <button className="cancel-btn" onClick={() => setEntryDate(todayISO())}>Volver a hoy</button>
+        )}
+      </div>
+
       <div className="hoy-actions-row">
         <button className="edit-toggle" onClick={shareRoutine}>
           <Share2 size={14} /> Compartir
@@ -1767,7 +1788,7 @@ function HoyTab({
           ) : (
             day.exercises.map((ex) => (
               <ExerciseCard
-                key={ex.id} exercise={ex} day={selectedDay} last={lastEntryFor(ex.id)} best={bestEntryFor(ex.id)}
+                key={ex.id} exercise={ex} day={selectedDay} entryDate={entryDate} last={lastEntryFor(ex.id)} best={bestEntryFor(ex.id)}
                 isOpen={openForm === ex.id}
                 onToggle={() => setOpenForm(openForm === ex.id ? null : ex.id)}
                 onSave={(entry) => { addLog(entry); setOpenForm(null); }}
@@ -1783,7 +1804,7 @@ function HoyTab({
   );
 }
 
-function ExerciseCard({ exercise, day, last, best, isOpen, onToggle, onSave, restDuration, setRestDuration, onRestStart }) {
+function ExerciseCard({ exercise, day, entryDate, last, best, isOpen, onToggle, onSave, restDuration, setRestDuration, onRestStart }) {
   const [weight, setWeight] = useState("");
   const [reps, setReps] = useState("");
   const [weightR, setWeightR] = useState("");
@@ -1835,7 +1856,7 @@ function ExerciseCard({ exercise, day, last, best, isOpen, onToggle, onSave, res
       else if (prR) prLabel = `${exercise.name} (Der)`;
       else if (prL) prLabel = `${exercise.name} (Izq)`;
       onSave({
-        date: todayISO(), day, exerciseId: exercise.id, exerciseName: exercise.name, unilateral: true,
+        date: entryDate, day, exerciseId: exercise.id, exerciseName: exercise.name, unilateral: true,
         weightR: wR, repsR: toNum(repsR), weightL: wL, repsL: toNum(repsL), rir: rirNum, prLabel,
       });
       setWeightR(""); setRepsR(""); setWeightL(""); setRepsL(""); setRir("");
@@ -1844,7 +1865,7 @@ function ExerciseCard({ exercise, day, last, best, isOpen, onToggle, onSave, res
       if (w == null) return;
       const isPR = w != null && (best?.weight == null || w > best.weight);
       onSave({
-        date: todayISO(), day, exerciseId: exercise.id, exerciseName: exercise.name, unilateral: false,
+        date: entryDate, day, exerciseId: exercise.id, exerciseName: exercise.name, unilateral: false,
         weight: w, reps: toNum(reps), rir: rirNum, prLabel: isPR ? exercise.name : null,
       });
       setWeight(""); setReps(""); setRir("");
@@ -2469,17 +2490,18 @@ function HistEditRow({ log, onCancel, onSave }) {
   const [weightL, setWeightL] = useState(toInput(log.weightL));
   const [repsL, setRepsL] = useState(toInput(log.repsL));
   const [rir, setRir] = useState(toInput(log.rir));
+  const [date, setDate] = useState(log.date);
 
   function submit() {
     const rirNum = toNum(rir);
     if (log.unilateral) {
       const wR = toNum(weightR), wL = toNum(weightL);
       if (wR == null && wL == null) return;
-      onSave({ weightR: wR, repsR: toNum(repsR), weightL: wL, repsL: toNum(repsL), rir: rirNum });
+      onSave({ date, weightR: wR, repsR: toNum(repsR), weightL: wL, repsL: toNum(repsL), rir: rirNum });
     } else {
       const w = toNum(weight);
       if (w == null) return;
-      onSave({ weight: w, reps: toNum(reps), rir: rirNum });
+      onSave({ date, weight: w, reps: toNum(reps), rir: rirNum });
     }
   }
 
@@ -2487,6 +2509,7 @@ function HistEditRow({ log, onCancel, onSave }) {
     <div className="card">
       <div className="hist-ex">{log.exerciseName}</div>
       <div className="card-form">
+        <input className="input date-nav-input" type="date" value={date} max={todayISO()} onChange={(e) => e.target.value && setDate(e.target.value)} />
         {log.unilateral ? (
           <div className="side-grid">
             <div className="side-col">
@@ -2617,6 +2640,7 @@ function ActivityForm({ onSave }) {
   const [usedWatch, setUsedWatch] = useState(false);
   const [avgHr, setAvgHr] = useState("");
   const [notes, setNotes] = useState("");
+  const [date, setDate] = useState(todayISO());
 
   function quickPick(n) {
     setName(n);
@@ -2625,7 +2649,7 @@ function ActivityForm({ onSave }) {
   function submit() {
     if (!name.trim()) return;
     onSave({
-      date: todayISO(),
+      date,
       name: name.trim(),
       durationMin: toNum(duration),
       intensityRpe: rpe,
@@ -2633,7 +2657,7 @@ function ActivityForm({ onSave }) {
       avgHr: usedWatch ? toNum(avgHr) : null,
       notes: notes.trim(),
     });
-    setName(""); setDuration(""); setRpe(null); setUsedWatch(false); setAvgHr(""); setNotes("");
+    setName(""); setDuration(""); setRpe(null); setUsedWatch(false); setAvgHr(""); setNotes(""); setDate(todayISO());
   }
 
   return (
@@ -2647,6 +2671,7 @@ function ActivityForm({ onSave }) {
         ))}
       </div>
       <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Nombre de la actividad" />
+      <input className="input date-nav-input" style={{ marginTop: 10 }} type="date" value={date} max={todayISO()} onChange={(e) => e.target.value && setDate(e.target.value)} />
 
       <div className="side-grid two" style={{ marginTop: 10 }}>
         <NumInput placeholder="Duración (min)" decimal={false} value={duration} onChange={setDuration} />
