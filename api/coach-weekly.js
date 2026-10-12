@@ -121,6 +121,13 @@ export function buildWeeklySummary({ bwLogs, logs, activityLogs, checkins, mealL
   const energyNow = avg(thisWeekChk.map((c) => c.energy));
   const sorenessNow = avg(thisWeekChk.map((c) => c.soreness));
   const painFlags = thisWeekChk.flatMap((c) => Object.entries(c.pain || {}).filter(([, v]) => v >= 6));
+  // Sin chequeos esta semana se interpreta como "sin novedades" (sin dolor,
+  // energia y fatiga normales), no como un dato faltante -- mismo criterio
+  // que computeCoach() en App.jsx. hay_registros/fuera_de_lo_normal le dan
+  // a la IA un criterio explicito en vez de tener que inferirlo de numeros
+  // en null (ver tambien la regla en SYSTEM_PROMPT mas abajo).
+  const hasRecoveryData = energyNow != null || sorenessNow != null || painFlags.length > 0;
+  const badRecovery = (energyNow != null && energyNow <= 2.2) || (sorenessNow != null && sorenessNow >= 4) || painFlags.length > 0;
 
   const thisWeekMeals = mealLogs.filter((m) => inWindow(m.date, w1Start, today));
   const mealDays = Array.from(new Set(thisWeekMeals.map((m) => m.date)));
@@ -134,9 +141,13 @@ export function buildWeeklySummary({ bwLogs, logs, activityLogs, checkins, mealL
   return {
     peso_kg: { esta_semana: round(weightNow, 2), semana_anterior: round(weightPrev, 2) },
     cintura_cm: { esta_semana: round(waistNow, 2), semana_anterior: round(waistPrev, 2) },
+    // sets_esta_semana son solo los que se cargaron a mano -- puede haber
+    // sesiones reales sin registrar (ver aclaracion en SYSTEM_PROMPT).
     entrenamiento: { sets_esta_semana: thisWeekSets.length, sets_semana_anterior: prevWeekSets.length, rir_promedio: round(rirNow, 1) },
     actividad_extra_minutos: { esta_semana: minutesNow, semana_anterior: minutesPrev },
     recuperacion: {
+      hay_registros: hasRecoveryData,
+      fuera_de_lo_normal: badRecovery,
       energia_promedio_0a5: round(energyNow, 1),
       fatiga_promedio_0a5: round(sorenessNow, 1),
       chequeos_con_dolor_alto: painFlags.length,
@@ -147,15 +158,24 @@ export function buildWeeklySummary({ bwLogs, logs, activityLogs, checkins, mealL
       objetivo_calorias: targets?.calories ?? null,
     },
     suplementos: {
+      cantidad_activos: activeSupplementIds.length,
+      // null cuando no hay suplementos activos (no aplica); false cuando
+      // hay activos pero cero tomas cargadas esta semana -- en ambos casos
+      // no hay forma de medir adherencia real, asi que no se reclama.
+      hay_registros_esta_semana: activeSupplementIds.length > 0 ? takenThisWeek > 0 : null,
       tomas_esta_semana: takenThisWeek,
       tomas_posibles: activeSupplementIds.length * 7,
-      cantidad_activos: activeSupplementIds.length,
     },
   };
 }
 
+// v puede ser boolean (hay_registros / fuera_de_lo_normal): un `false`
+// significa "sin novedades", no es una señal de que haya datos reales para
+// mostrarle a la IA -- solo `true` cuenta como presencia real.
 export function hasAnyRealData(summary) {
-  return Object.values(summary).some((group) => Object.values(group).some((v) => v != null && v !== 0));
+  return Object.values(summary).some((group) =>
+    Object.values(group).some((v) => (typeof v === "boolean" ? v === true : v != null && v !== 0))
+  );
 }
 
 const SYSTEM_PROMPT = `Sos el coach personal de un usuario de gimnasio que entrena fuerza y cuida su nutrición. Cada domingo recibís un resumen de su semana (datos ya calculados, en JSON) y escribís una nota breve para el lunes.
@@ -165,6 +185,8 @@ Reglas:
 - Entre 100 y 180 palabras, en prosa corrida (sin viñetas ni títulos).
 - Usá solo los números que te paso — no inventes datos que no están.
 - Si un dato falta (null o en cero), no lo trates como un problema de rendimiento — es que falta el registro, señalalo como tal si es relevante.
+- Recuperación y suplementos son un caso especial: si "hay_registros" (o "hay_registros_esta_semana") es false, NO lo menciones como un dato que falta — interpretalo directamente como que no hubo nada fuera de lo normal esa semana y quedate en silencio sobre eso, sin pedirle que registre más. Hablá de recuperación solo cuando "fuera_de_lo_normal" sea true (dolor, fatiga alta o energía baja), y de suplementos solo cuando sí haya registros esa semana (ahí sí comentá la adherencia real).
+- Los sets de entrenamiento (entrenamiento.sets_esta_semana) son solo los que se cargaron a mano — puede haber sesiones reales que no se registraron. No concluyas con certeza que entrenó poco solo por un número bajo; si lo mencionás, planteálo como posible falta de registro, no como un hecho confirmado.
 - Cerrá siempre con UNA sola prioridad concreta para la semana que arranca, en una frase.
 - No repitas el formato "esto subió, esto bajó" tal cual — eso ya lo ve en la app arriba de tu nota. Dale una lectura con criterio: qué es lo que importa de verdad esta semana y por qué.`;
 
