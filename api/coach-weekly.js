@@ -21,10 +21,17 @@
 //
 // Vercel detecta sola cualquier archivo bajo /api como funcion serverless,
 // accesible en /api/coach-weekly — no hace falta declararla en ningun lado.
-// Es una funcion HTTP comun (no usa el sistema de Cron Jobs propio de Vercel)
-// por la misma razon que en la version anterior para Netlify: no se pudo
-// verificar su sintaxis exacta sin acceso a la documentacion en vivo desde
-// este entorno. El cron vive afuera, apuntando a esta URL.
+// Es una funcion HTTP comun (no usa el sistema de Cron Jobs propio de
+// Vercel). El cron que la dispara una vez por semana vive en GitHub Actions
+// (.github/workflows/coach-weekly.yml, gratis) — antes apuntaba a un cron
+// de Netlify que ya no existe. Ese workflow necesita dos secrets del repo
+// (GitHub → Settings → Secrets and variables → Actions → New repository
+// secret):
+//   APP_URL             URL de produccion, sin barra al final
+//                        (ej. https://tu-app.vercel.app)
+//   COACH_CRON_SECRET   la MISMA clave que esta cargada como variable de
+//     entorno en Vercel (ver mas abajo) -- si no coinciden, el workflow
+//     va a fallar con 401.
 //
 // Por que pide clave: sin ella, cualquiera que encuentre la URL podria
 // disparar llamadas a la IA a tu costa (aunque sea gratis, sigue consumiendo

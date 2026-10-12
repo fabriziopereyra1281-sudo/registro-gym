@@ -1,0 +1,26 @@
+name: Coach semanal
+
+on:
+  schedule:
+    # Domingo 23:30 hora Argentina (UTC-3) = lunes 02:30 UTC. GitHub Actions
+    # no soporta zona horaria en el cron, por eso va expresado en UTC acá.
+    - cron: "30 2 * * 1"
+  workflow_dispatch: {}
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Disparar /api/coach-weekly
+        run: |
+          http_status=$(curl -s -o /dev/null -w "%{http_code}" -G \
+            "${APP_URL}/api/coach-weekly" \
+            --data-urlencode "key=${COACH_CRON_SECRET}")
+          echo "Respuesta de /api/coach-weekly: $http_status"
+          if [ "$http_status" -lt 200 ] || [ "$http_status" -ge 300 ]; then
+            echo "El coach semanal respondió $http_status (no 2xx)"
+            exit 1
+          fi
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          COACH_CRON_SECRET: ${{ secrets.COACH_CRON_SECRET }}
