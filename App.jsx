@@ -4317,20 +4317,27 @@ function computeCoach({ bwLogs, logs, activityLogs, checkins, mealLogs, targets,
     detail: `${minutesNow} min esta semana (antes ${minutesPrev})`,
   });
 
-  // Recuperacion
-  if (energyNow != null || sorenessNow != null) {
-    const bad = (energyNow != null && energyNow <= 2.2) || (sorenessNow != null && sorenessNow >= 4);
+  // Recuperacion: sin chequeos esta semana se interpreta como "sin
+  // novedades" (sin dolor, energia y fatiga normales) -- no es un dato
+  // faltante, es silencio porque no paso nada que valiera la pena registrar.
+  // Solo se marca "down" (y se habla de recuperacion con detalle) cuando hay
+  // algo realmente fuera de lo normal. Mismo criterio en buildWeeklySummary
+  // (api/coach-weekly.js) para que la nota de la IA diga lo mismo que esto.
+  {
+    const hasRecoveryData = energyNow != null || sorenessNow != null || painFlags.length > 0;
+    const badRecovery = (energyNow != null && energyNow <= 2.2) || (sorenessNow != null && sorenessNow >= 4) || painFlags.length > 0;
     blocks.push({
       key: "recuperacion",
       label: "Recuperación",
-      status: bad ? "down" : "flat",
-      detail:
-        (energyNow != null ? `Energía prom. ${fmtNum(Number(energyNow.toFixed(1)))}/5` : "Sin dato de energía") +
-        (sorenessNow != null ? ` · Fatiga ${fmtNum(Number(sorenessNow.toFixed(1)))}/5` : "") +
-        (painFlags.length ? ` · dolor alto en ${painFlags.length} chequeo(s)` : ""),
+      status: badRecovery ? "down" : "flat",
+      detail: hasRecoveryData
+        ? [
+            energyNow != null ? `Energía prom. ${fmtNum(Number(energyNow.toFixed(1)))}/5` : null,
+            sorenessNow != null ? `Fatiga ${fmtNum(Number(sorenessNow.toFixed(1)))}/5` : null,
+            painFlags.length ? `dolor alto en ${painFlags.length} chequeo(s)` : null,
+          ].filter(Boolean).join(" · ")
+        : "Sin chequeos esta semana — se asume sin novedades (sin dolor, energía y fatiga normales).",
     });
-  } else {
-    blocks.push({ key: "recuperacion", label: "Recuperación", status: "na", detail: "Sin chequeos diarios esta semana." });
   }
 
   // Nutricion
@@ -4353,22 +4360,32 @@ function computeCoach({ bwLogs, logs, activityLogs, checkins, mealLogs, targets,
     });
   }
 
-  // Suplementos: adherencia de la semana entre los que estan activos.
+  // Suplementos: adherencia de la semana entre los que estan activos. Cero
+  // tomas registradas no es "0% de adherencia" (eso suena a reclamo) -- sin
+  // ningun registro no hay forma de saber si tomo y no cargo, asi que se
+  // trata como dato faltante, no como mal desempeño.
   const activeSupplementIds = (supplements || []).filter((s) => s.active).map((s) => s.id);
-  if (activeSupplementIds.length > 0) {
-    const takenThisWeek = (supplementLogs || []).filter(
-      (l) => activeSupplementIds.includes(l.supplementId) && inWindow(l.date, w1Start, today)
-    ).length;
-    const possible = activeSupplementIds.length * 7;
-    const pct = possible > 0 ? Math.round((takenThisWeek / possible) * 100) : null;
+  const takenThisWeek = (supplementLogs || []).filter(
+    (l) => activeSupplementIds.includes(l.supplementId) && inWindow(l.date, w1Start, today)
+  ).length;
+  if (activeSupplementIds.length === 0) {
+    blocks.push({ key: "suplementos", label: "Suplementos", status: "na", detail: "Agregá suplementos en \"Más\" para activar este bloque." });
+  } else if (takenThisWeek === 0) {
     blocks.push({
       key: "suplementos",
       label: "Suplementos",
-      status: pct == null ? "na" : pct >= 80 ? "flat" : pct >= 50 ? "down" : "up",
-      detail: `${takenThisWeek}/${possible} tomas esta semana (${pct}% adherencia, ${activeSupplementIds.length} activo${activeSupplementIds.length === 1 ? "" : "s"})`,
+      status: "na",
+      detail: `Sin tomas registradas esta semana (${activeSupplementIds.length} activo${activeSupplementIds.length === 1 ? "" : "s"}) — no se puede medir adherencia sin registros.`,
     });
   } else {
-    blocks.push({ key: "suplementos", label: "Suplementos", status: "na", detail: "Agregá suplementos en \"Más\" para activar este bloque." });
+    const possible = activeSupplementIds.length * 7;
+    const pct = Math.round((takenThisWeek / possible) * 100);
+    blocks.push({
+      key: "suplementos",
+      label: "Suplementos",
+      status: pct >= 80 ? "flat" : pct >= 50 ? "down" : "up",
+      detail: `${takenThisWeek}/${possible} tomas esta semana (${pct}% adherencia, ${activeSupplementIds.length} activo${activeSupplementIds.length === 1 ? "" : "s"})`,
+    });
   }
 
   // Decision final: reglas en orden de prioridad.
@@ -4388,12 +4405,34 @@ function computeCoach({ bwLogs, logs, activityLogs, checkins, mealLogs, targets,
   } else if (hasTwoWeeks) {
     const dW = weightNow - weightPrev;
     const pctWeek = (dW / weightPrev) * 100;
-    if (dW >= -0.05) {
+    // Cintura disponible para distinguir una suba de peso real de una
+    // fluctuacion (agua, sal, ciclo, etc.): si subio bastante (>=0.5kg) pero
+    // la cintura se mantuvo o bajo, no hay evidencia de grasa real ganada --
+    // mejor esperar otra semana que saltar a "ajustá calorías".
+    const waistAvailable = waistNow != null && waistPrev != null;
+    const dC = waistAvailable ? Number((waistNow - waistPrev).toFixed(2)) : null;
+
+    if (dW >= 0.5 && waistAvailable && dC <= 0) {
+      decision = `El peso subió ${fmtNum(Number(dW.toFixed(2)))} kg pero la cintura se mantuvo o bajó (${dC <= 0 ? "" : "+"}${fmtNum(dC)} cm) — probablemente es fluctuación (agua, sodio, ciclo, etc.), no grasa real. Esperá otra semana antes de tocar nada.`;
+      tone = "info";
+    } else if (dW >= -0.05) {
+      const hasNutriData = targets?.calories && caloriesAvg != null;
       if (nutri && nutri.status === "up") {
         decision = "El peso no bajó y estás por encima del objetivo calórico. Ajustá ~150-200 kcal menos o sumá cardio/pasos esta semana.";
         tone = "warn";
+      } else if (hasNutriData && (targets.calories - caloriesAvg) / targets.calories > 0.1) {
+        // Ya come bastante por debajo del objetivo -- bajar mas no es la
+        // solucion, el problema es otro (adaptacion metabolica, registro
+        // inconsistente, etc.). Acercarse al objetivo es el primer paso.
+        const belowBy = Math.round(targets.calories - caloriesAvg);
+        const pctBelow = Math.round(((targets.calories - caloriesAvg) / targets.calories) * 100);
+        decision = `El peso se estancó, pero ya estás comiendo ${fmtNum(belowBy)} kcal por debajo del objetivo (~${pctBelow}% menos, ${fmtNum(Math.round(caloriesAvg))} vs ${fmtNum(targets.calories)} kcal) — bajar más no es la solución. Acercate al objetivo esta semana antes de ajustar calorías de nuevo.`;
+        tone = "warn";
+      } else if (hasNutriData) {
+        decision = "El peso se estancó. Si venís comiendo en línea con el objetivo, bajá ~100-150 kcal o subí actividad.";
+        tone = "warn";
       } else {
-        decision = "El peso se estancó. Si venís comiendo en línea con el objetivo, bajá ~100-150 kcal o subí actividad; si no tenés objetivo cargado, definilo en Nutrición para que el motor pueda distinguir estancamiento real de falta de datos.";
+        decision = "El peso se estancó, pero no tengo objetivo de calorías ni comidas registradas esta semana para saber si venís comiendo en línea — definí un objetivo en Nutrición y registrá las comidas para que el motor pueda distinguir estancamiento real de falta de datos.";
         tone = "warn";
       }
     } else if (pctWeek < -1) {
