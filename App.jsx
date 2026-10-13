@@ -16,58 +16,95 @@ const DAY_LABELS = { lun: "Lunes", mar: "Martes", mie: "Miércoles", jue: "Jueve
 // "Domingo" aunque ese dia no tenga una entrada en `config`.
 const WEEKDAY_NAMES = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
 
+// Musculo por ejercicio: se asigna solo (por palabras clave del nombre) al
+// crear el ejercicio, pero queda guardado en la config y es editable a mano
+// en "Editar rutina" -- no se recalcula solo despues de esa primera vez, asi
+// que renombrar el ejercicio no le cambia el musculo ya elegido.
+const MUSCLE_LABELS = {
+  espalda: "Espalda", pecho: "Pecho", hombros: "Hombros", biceps: "Bíceps", triceps: "Tríceps",
+  cuadriceps: "Cuádriceps", femorales: "Femorales", gemelos: "Gemelos", core: "Core", otro: "Otro",
+};
+const MUSCLE_ORDER = ["espalda", "pecho", "hombros", "biceps", "triceps", "cuadriceps", "femorales", "gemelos", "core", "otro"];
+function detectMuscle(name) {
+  const n = normalizeText(name);
+  // Orden importa: palabras especificas (femoral/pantorrilla/cuadriceps)
+  // antes que la bolsa generica de "elevacion" de hombros, porque
+  // "elevacion de pantorrilla" tambien contiene "elevacion".
+  if (n.includes("femoral")) return "femorales";
+  if (n.includes("pantorrilla")) return "gemelos";
+  if (n.includes("hack") || n.includes("sentadilla") || n.includes("cuadriceps") || n.includes("estocada")) return "cuadriceps";
+  if (n.includes("press militar") || n.includes("trapecio") || n.includes("elevacion") || n.includes("vuelo")) return "hombros";
+  if (n.includes("jalon") || n.includes("remo")) return "espalda";
+  if (n.includes("press plano") || n.includes("press inclinado") || n.includes("apertura")) return "pecho";
+  if (n.includes("triceps")) return "triceps";
+  if (n.includes("curl") || n.includes("biceps")) return "biceps";
+  if (n.includes("core")) return "core";
+  return "otro";
+}
+function muscleFor(ex) {
+  return ex?.muscle ?? detectMuscle(ex?.name || "");
+}
+// Series planificadas por ejercicio -- prellenan el selector "Series hechas"
+// al cargar un set; 3 es el default cuando todavia no se configuro.
+function plannedSetsFor(ex) {
+  return ex?.plannedSets ?? 3;
+}
+function mkEx(name, opts = {}) {
+  return { id: uid(), name, unilateral: false, sets: "", reps: "", plannedSets: 3, muscle: detectMuscle(name), ...opts };
+}
+
 function defaultTemplate() {
   return {
     lun: {
       focus: "Espalda y tríceps",
       note: "",
       exercises: [
-        { id: uid(), name: "Dominadas (+lastre)", unilateral: false, sets: "", reps: "" },
-        { id: uid(), name: "Remo con barra", unilateral: false, sets: "", reps: "" },
-        { id: uid(), name: "Jalón al pecho", unilateral: false, sets: "", reps: "" },
-        { id: uid(), name: "Extensión de tríceps (polea)", unilateral: false, sets: "", reps: "" },
-        { id: uid(), name: "Press francés", unilateral: false, sets: "", reps: "" },
+        mkEx("Dominadas (+lastre)"),
+        mkEx("Remo con barra"),
+        mkEx("Jalón al pecho"),
+        mkEx("Extensión de tríceps (polea)"),
+        mkEx("Press francés"),
       ],
     },
     mar: {
       focus: "Pecho y bíceps",
       note: "",
       exercises: [
-        { id: uid(), name: "Press de banca", unilateral: false, sets: "", reps: "" },
-        { id: uid(), name: "Press inclinado con mancuernas", unilateral: false, sets: "", reps: "" },
-        { id: uid(), name: "Aperturas con mancuernas", unilateral: false, sets: "", reps: "" },
-        { id: uid(), name: "Curl con barra", unilateral: false, sets: "", reps: "" },
-        { id: uid(), name: "Curl martillo", unilateral: false, sets: "", reps: "" },
+        mkEx("Press de banca"),
+        mkEx("Press inclinado con mancuernas"),
+        mkEx("Aperturas con mancuernas"),
+        mkEx("Curl con barra"),
+        mkEx("Curl martillo"),
       ],
     },
     mie: {
       focus: "Hombros y femorales",
       note: "",
       exercises: [
-        { id: uid(), name: "Press militar", unilateral: false, sets: "", reps: "" },
-        { id: uid(), name: "Elevaciones laterales", unilateral: false, sets: "", reps: "" },
-        { id: uid(), name: "Peso muerto rumano", unilateral: false, sets: "", reps: "" },
-        { id: uid(), name: "Curl femoral acostado", unilateral: false, sets: "", reps: "" },
+        mkEx("Press militar"),
+        mkEx("Elevaciones laterales"),
+        mkEx("Peso muerto rumano"),
+        mkEx("Curl femoral acostado"),
       ],
     },
     jue: {
       focus: "Brazos (bíceps y tríceps)",
       note: "Foco extra en el brazo derecho — trabajo unilateral",
       exercises: [
-        { id: uid(), name: "Curl con mancuerna", unilateral: true, sets: "", reps: "" },
-        { id: uid(), name: "Extensión de tríceps con mancuerna", unilateral: true, sets: "", reps: "" },
-        { id: uid(), name: "Curl martillo", unilateral: true, sets: "", reps: "" },
-        { id: uid(), name: "Press francés / fondos en banco", unilateral: false, sets: "", reps: "" },
+        mkEx("Curl con mancuerna", { unilateral: true }),
+        mkEx("Extensión de tríceps con mancuerna", { unilateral: true }),
+        mkEx("Curl martillo", { unilateral: true }),
+        mkEx("Press francés / fondos en banco"),
       ],
     },
     vie: {
       focus: "Cuádriceps y pantorrilla",
       note: "",
       exercises: [
-        { id: uid(), name: "Sentadilla", unilateral: false, sets: "", reps: "" },
-        { id: uid(), name: "Prensa", unilateral: false, sets: "", reps: "" },
-        { id: uid(), name: "Extensión de cuádriceps", unilateral: false, sets: "", reps: "" },
-        { id: uid(), name: "Elevación de pantorrilla", unilateral: false, sets: "", reps: "" },
+        mkEx("Sentadilla"),
+        mkEx("Prensa"),
+        mkEx("Extensión de cuádriceps"),
+        mkEx("Elevación de pantorrilla"),
       ],
     },
   };
@@ -194,6 +231,7 @@ function mapLogRow(row) {
     weightL: row.weight_l,
     repsL: row.reps_l,
     rir: row.rir,
+    sets: row.sets ?? 1,
   };
 }
 function mapBwRow(row) {
@@ -660,6 +698,7 @@ export default function App() {
       weight_l: entry.weightL ?? null,
       reps_l: entry.repsL ?? null,
       rir: entry.rir ?? null,
+      sets: entry.sets ?? 1,
     };
     if (isOnline) {
       const { data, error } = await supabase.from("workout_logs").insert(row).select().single();
@@ -685,10 +724,11 @@ export default function App() {
       weight_l: patch.weightL ?? null,
       reps_l: patch.repsL ?? null,
       rir: patch.rir ?? null,
+      sets: patch.sets ?? 1,
     };
     const localPatch = {
       date: row.date, weight: row.weight, reps: row.reps, weightR: row.weight_r, repsR: row.reps_r,
-      weightL: row.weight_l, repsL: row.reps_l, rir: row.rir,
+      weightL: row.weight_l, repsL: row.reps_l, rir: row.rir, sets: row.sets,
     };
     // El set todavia no se mando al server (id temporal): el cambio se mergea
     // directo en el insert pendiente, no hace falta un update aparte.
@@ -1138,7 +1178,7 @@ export default function App() {
     persistConfig({ ...config, [dayKey]: { ...config[dayKey], note: text } });
   }
   function addExercise(dayKey) {
-    const ex = { id: uid(), name: "Nuevo ejercicio", unilateral: false, sets: "", reps: "" };
+    const ex = mkEx("Nuevo ejercicio");
     persistConfig({ ...config, [dayKey]: { ...config[dayKey], exercises: [...config[dayKey].exercises, ex] } });
   }
   function updateExercise(dayKey, exId, patch) {
@@ -1286,6 +1326,7 @@ export default function App() {
               supplements={supplements}
               supplementLogs={supplementLogs}
               coachNote={coachNote}
+              config={config}
             />
           )}
         </main>
@@ -1478,6 +1519,18 @@ function NumInput({ value, onChange, placeholder, decimal = true, className = "i
       value={value}
       onChange={(e) => onChange(decimal ? sanitizeDecimal(e.target.value) : sanitizeInt(e.target.value))}
     />
+  );
+}
+
+// Selector -/+ de "series hechas", prellenado con plannedSets del ejercicio
+// -- el usuario solo lo toca si hizo otra cantidad (ver ExerciseCard/HistEditRow).
+function SetsStepper({ value, onChange }) {
+  return (
+    <div className="sets-stepper">
+      <button type="button" className="stepper-btn" onClick={() => onChange(Math.max(1, value - 1))}>−</button>
+      <span className="stepper-value mono">{value}</span>
+      <button type="button" className="stepper-btn" onClick={() => onChange(value + 1)}>+</button>
+    </div>
   );
 }
 
@@ -1775,6 +1828,19 @@ function HoyTab({
                   <input className="input target-input" type="text" autoComplete="off" value={ex.reps ?? ""} placeholder="8-10"
                     onChange={(e) => updateExercise(selectedDay, ex.id, { reps: e.target.value })} />
                 </label>
+                <label className="target-field">
+                  <span className="target-cap">Series planif.</span>
+                  <NumInput className="input target-input" decimal={false} value={String(plannedSetsFor(ex))} placeholder="3"
+                    onChange={(v) => updateExercise(selectedDay, ex.id, { plannedSets: v === "" ? 3 : Math.max(1, Number(v)) })} />
+                </label>
+                <label className="target-field">
+                  <span className="target-cap">Músculo</span>
+                  <select className="input target-input" value={muscleFor(ex)} onChange={(e) => updateExercise(selectedDay, ex.id, { muscle: e.target.value })}>
+                    {MUSCLE_ORDER.map((m) => (
+                      <option key={m} value={m}>{MUSCLE_LABELS[m]}</option>
+                    ))}
+                  </select>
+                </label>
               </div>
             </div>
           ))}
@@ -1812,6 +1878,7 @@ function ExerciseCard({ exercise, day, entryDate, last, best, isOpen, onToggle, 
   const [weightL, setWeightL] = useState("");
   const [repsL, setRepsL] = useState("");
   const [rir, setRir] = useState("");
+  const [setsDone, setSetsDone] = useState(plannedSetsFor(exercise));
 
   const target = targetText(exercise);
 
@@ -1857,18 +1924,18 @@ function ExerciseCard({ exercise, day, entryDate, last, best, isOpen, onToggle, 
       else if (prL) prLabel = `${exercise.name} (Izq)`;
       onSave({
         date: entryDate, day, exerciseId: exercise.id, exerciseName: exercise.name, unilateral: true,
-        weightR: wR, repsR: toNum(repsR), weightL: wL, repsL: toNum(repsL), rir: rirNum, prLabel,
+        weightR: wR, repsR: toNum(repsR), weightL: wL, repsL: toNum(repsL), rir: rirNum, prLabel, sets: setsDone,
       });
-      setWeightR(""); setRepsR(""); setWeightL(""); setRepsL(""); setRir("");
+      setWeightR(""); setRepsR(""); setWeightL(""); setRepsL(""); setRir(""); setSetsDone(plannedSetsFor(exercise));
     } else {
       const w = toNum(weight);
       if (w == null) return;
       const isPR = w != null && (best?.weight == null || w > best.weight);
       onSave({
         date: entryDate, day, exerciseId: exercise.id, exerciseName: exercise.name, unilateral: false,
-        weight: w, reps: toNum(reps), rir: rirNum, prLabel: isPR ? exercise.name : null,
+        weight: w, reps: toNum(reps), rir: rirNum, prLabel: isPR ? exercise.name : null, sets: setsDone,
       });
-      setWeight(""); setReps(""); setRir("");
+      setWeight(""); setReps(""); setRir(""); setSetsDone(plannedSetsFor(exercise));
     }
   }
 
@@ -1908,6 +1975,10 @@ function ExerciseCard({ exercise, day, entryDate, last, best, isOpen, onToggle, 
             </div>
           )}
           <NumInput placeholder="RIR (opcional, 0-10)" decimal={false} value={rir} onChange={setRir} />
+          <div className="sets-done-row">
+            <span className="target-cap">Series hechas</span>
+            <SetsStepper value={setsDone} onChange={setSetsDone} />
+          </div>
           {setRestDuration && (
             <div className="chiprow rest-chiprow">
               {[60, 90, 120].map((sec) => (
@@ -2491,17 +2562,18 @@ function HistEditRow({ log, onCancel, onSave }) {
   const [repsL, setRepsL] = useState(toInput(log.repsL));
   const [rir, setRir] = useState(toInput(log.rir));
   const [date, setDate] = useState(log.date);
+  const [sets, setSets] = useState(log.sets ?? 1);
 
   function submit() {
     const rirNum = toNum(rir);
     if (log.unilateral) {
       const wR = toNum(weightR), wL = toNum(weightL);
       if (wR == null && wL == null) return;
-      onSave({ date, weightR: wR, repsR: toNum(repsR), weightL: wL, repsL: toNum(repsL), rir: rirNum });
+      onSave({ date, weightR: wR, repsR: toNum(repsR), weightL: wL, repsL: toNum(repsL), rir: rirNum, sets });
     } else {
       const w = toNum(weight);
       if (w == null) return;
-      onSave({ date, weight: w, reps: toNum(reps), rir: rirNum });
+      onSave({ date, weight: w, reps: toNum(reps), rir: rirNum, sets });
     }
   }
 
@@ -2536,6 +2608,10 @@ function HistEditRow({ log, onCancel, onSave }) {
           </div>
         )}
         <NumInput placeholder="RIR (opcional, 0-10)" decimal={false} value={rir} onChange={setRir} />
+        <div className="sets-done-row">
+          <span className="target-cap">Series hechas</span>
+          <SetsStepper value={sets} onChange={setSets} />
+        </div>
         <div className="edit-actions">
           <button className="cancel-btn" onClick={onCancel}>Cancelar</button>
           <button className="save-btn" onClick={submit}>Guardar cambios</button>
@@ -4232,6 +4308,58 @@ function inWindow(dateISO, fromISO, toISOEnd) {
   return dateISO >= fromISO && dateISO <= toISOEnd;
 }
 
+// Series por grupo muscular: el campo `sets` de workout_logs recien empieza
+// a cargarse a partir de esta fecha (antes la columna no existia / el
+// usuario no elegia cuantas series hizo). Para registros de ANTES de este
+// dia no confiamos en el valor crudo (la columna los deja todos en 1 por el
+// default) -- se estima con plannedSets del ejercicio (o 1 si el ejercicio
+// ya no existe en la rutina), que es la mejor aproximacion disponible.
+const SETS_TRACKING_SINCE = "2026-10-13";
+function buildExercisesById(config) {
+  const map = {};
+  Object.values(config || {}).forEach((day) => {
+    (day?.exercises || []).forEach((ex) => { map[ex.id] = ex; });
+  });
+  return map;
+}
+function effectiveSetsFor(log, exercisesById) {
+  // Un registro unilateral ya representa un set coordinado de ambos lados
+  // -- cuenta como 1 serie para el volumen por grupo, sin importar `sets`.
+  if (log.unilateral) return 1;
+  if (log.date >= SETS_TRACKING_SINCE) return log.sets ?? 1;
+  const ex = exercisesById[log.exerciseId];
+  return ex?.plannedSets ?? 1;
+}
+function muscleForLog(log, exercisesById) {
+  const ex = exercisesById[log.exerciseId];
+  if (ex) return muscleFor(ex);
+  return detectMuscle(log.exerciseName || "");
+}
+function computeMuscleVolume(thisWeekLogs, prevWeekLogs, exercisesById) {
+  const sumByMuscle = (arr) => {
+    const totals = {};
+    arr.forEach((l) => {
+      const m = muscleForLog(l, exercisesById);
+      totals[m] = (totals[m] || 0) + effectiveSetsFor(l, exercisesById);
+    });
+    return totals;
+  };
+  const now = sumByMuscle(thisWeekLogs);
+  const prev = sumByMuscle(prevWeekLogs);
+  const muscles = new Set([...Object.keys(now), ...Object.keys(prev)]);
+  return MUSCLE_ORDER.filter((m) => muscles.has(m)).map((m) => {
+    const setsNow = now[m] || 0;
+    const setsPrev = prev[m] || 0;
+    return {
+      muscle: m,
+      label: MUSCLE_LABELS[m],
+      setsNow,
+      setsPrev,
+      status: setsNow < 10 ? "below" : setsNow <= 20 ? "target" : "high",
+    };
+  });
+}
+
 // Veredicto automatico entre dos fotos: usa el peso/cintura cargados junto a
 // cada una (si estan) para decir avance/retroceso/estable sin que el usuario
 // tenga que interpretar los numeros el mismo. No analiza la imagen en si
@@ -4257,7 +4385,7 @@ function photoVerdict(older, newer) {
   return { tone, label, text: `${label}: ${parts.join(" · ")} entre estas dos fotos.` };
 }
 
-function computeCoach({ bwLogs, logs, activityLogs, checkins, mealLogs, targets, supplements, supplementLogs }) {
+function computeCoach({ bwLogs, logs, activityLogs, checkins, mealLogs, targets, supplements, supplementLogs, config }) {
   const today = todayISO();
   const w1Start = daysAgoISO(6); // esta semana: hoy y los 6 dias anteriores
   const w2Start = daysAgoISO(13);
@@ -4276,6 +4404,8 @@ function computeCoach({ bwLogs, logs, activityLogs, checkins, mealLogs, targets,
   const rirPrev = avg(prevWeekSets.map((l) => l.rir));
   const volumeNow = thisWeekSets.length;
   const volumePrev = prevWeekSets.length;
+  const exercisesById = buildExercisesById(config);
+  const muscleVolume = computeMuscleVolume(thisWeekSets, prevWeekSets, exercisesById);
 
   const thisWeekAct = activityLogs.filter((a) => inWindow(a.date, w1Start, today));
   const prevWeekAct = activityLogs.filter((a) => inWindow(a.date, w2Start, w2End));
@@ -4475,7 +4605,7 @@ function computeCoach({ bwLogs, logs, activityLogs, checkins, mealLogs, targets,
     }
   }
 
-  return { blocks, decision, tone };
+  return { blocks, decision, tone, muscleVolume };
 }
 
 function StatusDot({ status }) {
@@ -4484,10 +4614,10 @@ function StatusDot({ status }) {
   return <span className={"status-dot " + cls[status]}>{map[status]}</span>;
 }
 
-function CoachTab({ bwLogs, logs, activityLogs, checkins, mealLogs, targets, supplements, supplementLogs, coachNote }) {
+function CoachTab({ bwLogs, logs, activityLogs, checkins, mealLogs, targets, supplements, supplementLogs, coachNote, config }) {
   const result = useMemo(
-    () => computeCoach({ bwLogs, logs, activityLogs, checkins, mealLogs, targets, supplements, supplementLogs }),
-    [bwLogs, logs, activityLogs, checkins, mealLogs, targets, supplements, supplementLogs]
+    () => computeCoach({ bwLogs, logs, activityLogs, checkins, mealLogs, targets, supplements, supplementLogs, config }),
+    [bwLogs, logs, activityLogs, checkins, mealLogs, targets, supplements, supplementLogs, config]
   );
 
   return (
@@ -4530,6 +4660,31 @@ function CoachTab({ bwLogs, logs, activityLogs, checkins, mealLogs, targets, sup
             </div>
           ))}
         </div>
+      </section>
+
+      <section className="card">
+        <div className="section-title">Series por grupo muscular</div>
+        <div className="section-sub">Últimos 7 días vs. la anterior — series estimadas (referencia: 10-20 por grupo)</div>
+        {result.muscleVolume.length === 0 ? (
+          <div className="empty small">Todavía no hay series cargadas para estimar esto.</div>
+        ) : (
+          <div className="cardlist">
+            {result.muscleVolume.map((m) => (
+              <div key={m.muscle} className="muscle-vol-row">
+                <div className="muscle-vol-head">
+                  <span className="coach-label">{m.label}</span>
+                  <span className="hist-detail mono">{m.setsNow} series (antes {m.setsPrev})</span>
+                </div>
+                <div className="muscle-vol-bar-track">
+                  <div
+                    className={"muscle-vol-bar-fill muscle-vol-" + m.status}
+                    style={{ width: `${Math.min(100, (m.setsNow / 25) * 100)}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
 
       <div className="empty small">
@@ -4651,8 +4806,23 @@ const CSS = `
 .del-btn { background: none; border: none; color: #5C6470; padding: 6px; flex-shrink: 0; }
 
 .ex-edit { display: flex; flex-direction: column; gap: 10px; }
-.target-row { display: flex; align-items: center; gap: 10px; }
-.target-field { flex: 1; display: flex; align-items: center; gap: 7px; }
+.target-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.target-field { flex: 1 1 42%; display: flex; align-items: center; gap: 7px; }
+.sets-done-row { display: flex; align-items: center; gap: 10px; }
+.sets-stepper { display: flex; align-items: center; gap: 10px; }
+.stepper-btn {
+  width: 32px; height: 32px; border-radius: 8px; border: 1px solid rgba(237,234,227,0.14);
+  background: #242A31; color: #EDEAE3; font-size: 16px; line-height: 1; cursor: pointer;
+}
+.stepper-value { font-size: 15px; min-width: 20px; text-align: center; }
+.muscle-vol-row { display: flex; flex-direction: column; gap: 6px; padding: 10px 0; border-top: 1px solid rgba(237,234,227,0.06); }
+.muscle-vol-row:first-child { border-top: none; padding-top: 2px; }
+.muscle-vol-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.muscle-vol-bar-track { height: 8px; border-radius: 4px; background: rgba(237,234,227,0.08); overflow: hidden; }
+.muscle-vol-bar-fill { height: 100%; border-radius: 4px; }
+.muscle-vol-below { background: #5C6470; }
+.muscle-vol-target { background: #6E9B8B; }
+.muscle-vol-high { background: #C0673A; }
 .target-cap { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: #8B93A0; white-space: nowrap; }
 .target-input { padding: 8px 10px; font-size: 13px; }
 .target-badge { display: inline-block; margin-top: 5px; font-size: 10.5px; letter-spacing: 0.05em; color: #C08A3E; background: rgba(192,138,62,0.14); border-radius: 6px; padding: 2px 8px; }

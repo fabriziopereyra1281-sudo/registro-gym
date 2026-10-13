@@ -92,10 +92,70 @@ export function round(n, d = 1) {
 }
 
 // ---------------------------------------------------------------------------
+// Series por grupo muscular -- misma logica que App.jsx (detectMuscle,
+// SETS_TRACKING_SINCE, effectiveSetsFor, computeMuscleVolume), adaptada a
+// que acá `logs` son filas crudas de Supabase (snake_case) en vez de los
+// logs ya mapeados del cliente. Mantenida igual a mano -- ver comentario en
+// computeCoach() de App.jsx.
+function normalizeText(s) {
+  return String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+}
+function detectMuscle(name) {
+  const n = normalizeText(name);
+  if (n.includes("femoral")) return "femorales";
+  if (n.includes("pantorrilla")) return "gemelos";
+  if (n.includes("hack") || n.includes("sentadilla") || n.includes("cuadriceps") || n.includes("estocada")) return "cuadriceps";
+  if (n.includes("press militar") || n.includes("trapecio") || n.includes("elevacion") || n.includes("vuelo")) return "hombros";
+  if (n.includes("jalon") || n.includes("remo")) return "espalda";
+  if (n.includes("press plano") || n.includes("press inclinado") || n.includes("apertura")) return "pecho";
+  if (n.includes("triceps")) return "triceps";
+  if (n.includes("curl") || n.includes("biceps")) return "biceps";
+  if (n.includes("core")) return "core";
+  return "otro";
+}
+const SETS_TRACKING_SINCE = "2026-10-13";
+function buildExercisesById(config) {
+  const map = {};
+  Object.values(config || {}).forEach((day) => {
+    (day?.exercises || []).forEach((ex) => { map[ex.id] = ex; });
+  });
+  return map;
+}
+function effectiveSetsFor(log, exercisesById) {
+  if (log.unilateral) return 1;
+  if (log.date >= SETS_TRACKING_SINCE) return log.sets ?? 1;
+  const ex = exercisesById[log.exercise_id];
+  return ex?.plannedSets ?? 1;
+}
+function muscleForLog(log, exercisesById) {
+  const ex = exercisesById[log.exercise_id];
+  if (ex) return ex.muscle ?? detectMuscle(ex.name);
+  return detectMuscle(log.exercise_name || "");
+}
+function computeMuscleVolume(thisWeekLogs, prevWeekLogs, exercisesById) {
+  const sumByMuscle = (arr) => {
+    const totals = {};
+    arr.forEach((l) => {
+      const m = muscleForLog(l, exercisesById);
+      totals[m] = (totals[m] || 0) + effectiveSetsFor(l, exercisesById);
+    });
+    return totals;
+  };
+  const now = sumByMuscle(thisWeekLogs);
+  const prev = sumByMuscle(prevWeekLogs);
+  const muscles = new Set([...Object.keys(now), ...Object.keys(prev)]);
+  const result = {};
+  muscles.forEach((m) => {
+    result[m] = { esta_semana: now[m] || 0, semana_anterior: prev[m] || 0 };
+  });
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Los mismos bloques que arma computeCoach() en App.jsx, pero como datos
 // planos para mandarle a la IA — la nota tiene que hablar de los mismos
 // números que ya ve el usuario en "Panel de control", no de otra cosa.
-export function buildWeeklySummary({ bwLogs, logs, activityLogs, checkins, mealLogs, targets, supplements, supplementLogs }) {
+export function buildWeeklySummary({ bwLogs, logs, activityLogs, checkins, mealLogs, targets, supplements, supplementLogs, config }) {
   const today = todayISO();
   const w1Start = daysAgoISO(6);
   const w2Start = daysAgoISO(13);
@@ -111,6 +171,8 @@ export function buildWeeklySummary({ bwLogs, logs, activityLogs, checkins, mealL
   const thisWeekSets = logs.filter((l) => inWindow(l.date, w1Start, today));
   const prevWeekSets = logs.filter((l) => inWindow(l.date, w2Start, w2End));
   const rirNow = avg(thisWeekSets.map((l) => l.rir));
+  const exercisesById = buildExercisesById(config);
+  const muscleVolume = computeMuscleVolume(thisWeekSets, prevWeekSets, exercisesById);
 
   const thisWeekAct = activityLogs.filter((a) => inWindow(a.date, w1Start, today));
   const prevWeekAct = activityLogs.filter((a) => inWindow(a.date, w2Start, w2End));
@@ -143,7 +205,14 @@ export function buildWeeklySummary({ bwLogs, logs, activityLogs, checkins, mealL
     cintura_cm: { esta_semana: round(waistNow, 2), semana_anterior: round(waistPrev, 2) },
     // sets_esta_semana son solo los que se cargaron a mano -- puede haber
     // sesiones reales sin registrar (ver aclaracion en SYSTEM_PROMPT).
-    entrenamiento: { sets_esta_semana: thisWeekSets.length, sets_semana_anterior: prevWeekSets.length, rir_promedio: round(rirNow, 1) },
+    entrenamiento: {
+      sets_esta_semana: thisWeekSets.length,
+      sets_semana_anterior: prevWeekSets.length,
+      rir_promedio: round(rirNow, 1),
+      // Series ESTIMADAS por grupo muscular (ver aclaracion en SYSTEM_PROMPT
+      // sobre el margen de error de esta estimacion).
+      series_por_grupo_muscular: muscleVolume,
+    },
     actividad_extra_minutos: { esta_semana: minutesNow, semana_anterior: minutesPrev },
     recuperacion: {
       hay_registros: hasRecoveryData,
@@ -171,11 +240,19 @@ export function buildWeeklySummary({ bwLogs, logs, activityLogs, checkins, mealL
 
 // v puede ser boolean (hay_registros / fuera_de_lo_normal): un `false`
 // significa "sin novedades", no es una señal de que haya datos reales para
-// mostrarle a la IA -- solo `true` cuenta como presencia real.
+// mostrarle a la IA -- solo `true` cuenta como presencia real. v tambien
+// puede ser un objeto anidado (series_por_grupo_muscular): hay que recorrerlo
+// en vez de tratarlo como "siempre verdadero" por no ser null, o un objeto
+// vacio ({}, cuando no hubo nada que agrupar) rompería el chequeo de "semana
+// sin nada cargado" y la nota se generaría igual sin datos reales.
+function isRealValue(v) {
+  if (v == null) return false;
+  if (typeof v === "boolean") return v === true;
+  if (typeof v === "object") return Object.values(v).some(isRealValue);
+  return v !== 0;
+}
 export function hasAnyRealData(summary) {
-  return Object.values(summary).some((group) =>
-    Object.values(group).some((v) => (typeof v === "boolean" ? v === true : v != null && v !== 0))
-  );
+  return Object.values(summary).some((group) => Object.values(group).some(isRealValue));
 }
 
 const SYSTEM_PROMPT = `Sos el coach personal de un usuario de gimnasio que entrena fuerza y cuida su nutrición. Cada domingo recibís un resumen de su semana (datos ya calculados, en JSON) y escribís una nota breve para el lunes.
@@ -187,21 +264,23 @@ Reglas:
 - Si un dato falta (null o en cero), no lo trates como un problema de rendimiento — es que falta el registro, señalalo como tal si es relevante.
 - Recuperación y suplementos son un caso especial: si "hay_registros" (o "hay_registros_esta_semana") es false, NO lo menciones como un dato que falta — interpretalo directamente como que no hubo nada fuera de lo normal esa semana y quedate en silencio sobre eso, sin pedirle que registre más. Hablá de recuperación solo cuando "fuera_de_lo_normal" sea true (dolor, fatiga alta o energía baja), y de suplementos solo cuando sí haya registros esa semana (ahí sí comentá la adherencia real).
 - Los sets de entrenamiento (entrenamiento.sets_esta_semana) son solo los que se cargaron a mano — puede haber sesiones reales que no se registraron. No concluyas con certeza que entrenó poco solo por un número bajo; si lo mencionás, planteálo como posible falta de registro, no como un hecho confirmado.
+- entrenamiento.series_por_grupo_muscular son series ESTIMADAS por grupo (no una medición exacta: para ejercicios unilaterales cuenta 1 serie por registro, y para registros viejos sin ese dato se estima con las series planificadas del ejercicio). La referencia general es 10-20 series semanales por grupo. Usalo como guía aproximada, no concluyas con certeza absoluta sobre un grupo puntual a partir de este número.
 - Cerrá siempre con UNA sola prioridad concreta para la semana que arranca, en una frase.
 - No repitas el formato "esto subió, esto bajó" tal cual — eso ya lo ve en la app arriba de tu nota. Dale una lectura con criterio: qué es lo que importa de verdad esta semana y por qué.`;
 
 async function writeWeeklyNote({ supabase, geminiKey, geminiModel, zaiKey, zaiModel, userId }) {
   const from = daysAgoISO(13);
 
-  const [bw, logs, activity, checkins, meals, targetsRes, supplements, supplementLogs] = await Promise.all([
+  const [bw, logs, activity, checkins, meals, targetsRes, supplements, supplementLogs, configRes] = await Promise.all([
     supabase.from("bodyweight_logs").select("date, weight, waist").eq("user_id", userId).gte("date", from),
-    supabase.from("workout_logs").select("date, rir").eq("user_id", userId).gte("date", from),
+    supabase.from("workout_logs").select("date, rir, exercise_id, exercise_name, unilateral, sets").eq("user_id", userId).gte("date", from),
     supabase.from("activity_logs").select("date, duration_min").eq("user_id", userId).gte("date", from),
     supabase.from("daily_checkins").select("date, energy, soreness, pain").eq("user_id", userId).gte("date", from),
     supabase.from("meal_logs").select("date, calories").eq("user_id", userId).gte("date", from),
     supabase.from("nutrition_targets").select("calories").eq("user_id", userId).maybeSingle(),
     supabase.from("supplements").select("id, active").eq("user_id", userId),
     supabase.from("supplement_logs").select("supplement_id, date").eq("user_id", userId).gte("date", from),
+    supabase.from("configs").select("config").eq("user_id", userId).maybeSingle(),
   ]);
 
   const summary = buildWeeklySummary({
@@ -213,6 +292,7 @@ async function writeWeeklyNote({ supabase, geminiKey, geminiModel, zaiKey, zaiMo
     targets: targetsRes.data || {},
     supplements: supplements.data || [],
     supplementLogs: supplementLogs.data || [],
+    config: configRes.data?.config || {},
   });
 
   // Sin nada cargado esta ventana no tiene sentido gastar en una nota vacia.
