@@ -4417,7 +4417,12 @@ function computeCoach({ bwLogs, logs, activityLogs, checkins, mealLogs, targets,
   const sorenessNow = avg(thisWeekChk.map((c) => c.soreness));
   const painFlags = thisWeekChk.flatMap((c) => Object.entries(c.pain || {}).filter(([, v]) => v >= 6));
 
-  const thisWeekMeals = mealLogs.filter((m) => inWindow(m.date, w1Start, today));
+  // Nutricion: promedios solo con dias CERRADOS -- hoy todavia esta en curso
+  // (puede faltarle comidas) asi que no cuenta como "dia registrado" ni entra
+  // en el promedio. Ventana de los 7 dias completos anteriores a hoy.
+  const n1Start = daysAgoISO(7);
+  const n1End = daysAgoISO(1);
+  const thisWeekMeals = mealLogs.filter((m) => inWindow(m.date, n1Start, n1End));
   const daysWithMeals = new Set(thisWeekMeals.map((m) => m.date)).size;
   const caloriesAvg = avg(
     Array.from(new Set(thisWeekMeals.map((m) => m.date))).map((d) =>
@@ -4518,19 +4523,26 @@ function computeCoach({ bwLogs, logs, activityLogs, checkins, mealLogs, targets,
   // Suplementos: adherencia de la semana entre los que estan activos. Cero
   // tomas registradas no es "0% de adherencia" (eso suena a reclamo) -- sin
   // ningun registro no hay forma de saber si tomo y no cargo, asi que se
-  // trata como dato faltante, no como mal desempeño.
+  // trata como dato faltante, no como mal desempeño. Mismo criterio si viene
+  // cargando MUY poco (menos de 3 tomas en las ultimas 2 semanas): no es un
+  // registro habitual, asi que medir "% de adherencia" sobre eso seria un
+  // numero casi sin sentido -- se omite el tema entero en vez de reclamar.
   const activeSupplementIds = (supplements || []).filter((s) => s.active).map((s) => s.id);
   const takenThisWeek = (supplementLogs || []).filter(
     (l) => activeSupplementIds.includes(l.supplementId) && inWindow(l.date, w1Start, today)
   ).length;
+  const takenPrevWeek = (supplementLogs || []).filter(
+    (l) => activeSupplementIds.includes(l.supplementId) && inWindow(l.date, w2Start, w2End)
+  ).length;
+  const takenLastTwoWeeks = takenThisWeek + takenPrevWeek;
   if (activeSupplementIds.length === 0) {
     blocks.push({ key: "suplementos", label: "Suplementos", status: "na", detail: "Agregá suplementos en \"Más\" para activar este bloque." });
-  } else if (takenThisWeek === 0) {
+  } else if (takenLastTwoWeeks < 3) {
     blocks.push({
       key: "suplementos",
       label: "Suplementos",
       status: "na",
-      detail: `Sin tomas registradas esta semana (${activeSupplementIds.length} activo${activeSupplementIds.length === 1 ? "" : "s"}) — no se puede medir adherencia sin registros.`,
+      detail: `Muy pocas tomas registradas en las últimas 2 semanas (${takenLastTwoWeeks}, ${activeSupplementIds.length} activo${activeSupplementIds.length === 1 ? "" : "s"}) — no se puede medir adherencia sin un registro más habitual.`,
     });
   } else {
     const possible = activeSupplementIds.length * 7;

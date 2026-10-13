@@ -191,14 +191,28 @@ export function buildWeeklySummary({ bwLogs, logs, activityLogs, checkins, mealL
   const hasRecoveryData = energyNow != null || sorenessNow != null || painFlags.length > 0;
   const badRecovery = (energyNow != null && energyNow <= 2.2) || (sorenessNow != null && sorenessNow >= 4) || painFlags.length > 0;
 
-  const thisWeekMeals = mealLogs.filter((m) => inWindow(m.date, w1Start, today));
+  // Nutricion: promedios solo con dias CERRADOS -- hoy todavia esta en curso
+  // (puede faltarle comidas) asi que no cuenta como "dia registrado" ni entra
+  // en el promedio. Ventana de los 7 dias completos anteriores a hoy. Mismo
+  // criterio que computeCoach() en App.jsx.
+  const n1Start = daysAgoISO(7);
+  const n1End = daysAgoISO(1);
+  const thisWeekMeals = mealLogs.filter((m) => inWindow(m.date, n1Start, n1End));
   const mealDays = Array.from(new Set(thisWeekMeals.map((m) => m.date)));
   const caloriesAvg = avg(mealDays.map((d) => thisWeekMeals.filter((m) => m.date === d).reduce((s, m) => s + (m.calories || 0), 0)));
 
+  // Suplementos: si viene cargando MUY poco (menos de 3 tomas en las
+  // ultimas 2 semanas) no es un registro habitual -- medir "% adherencia"
+  // sobre eso seria casi sin sentido, asi que se omite el tema en vez de
+  // reclamar. Mismo criterio que computeCoach() en App.jsx.
   const activeSupplementIds = (supplements || []).filter((s) => s.active).map((s) => s.id);
   const takenThisWeek = (supplementLogs || []).filter(
     (l) => activeSupplementIds.includes(l.supplement_id) && inWindow(l.date, w1Start, today)
   ).length;
+  const takenPrevWeek = (supplementLogs || []).filter(
+    (l) => activeSupplementIds.includes(l.supplement_id) && inWindow(l.date, w2Start, w2End)
+  ).length;
+  const takenLastTwoWeeks = takenThisWeek + takenPrevWeek;
 
   return {
     peso_kg: { esta_semana: round(weightNow, 2), semana_anterior: round(weightPrev, 2) },
@@ -228,10 +242,11 @@ export function buildWeeklySummary({ bwLogs, logs, activityLogs, checkins, mealL
     },
     suplementos: {
       cantidad_activos: activeSupplementIds.length,
-      // null cuando no hay suplementos activos (no aplica); false cuando
-      // hay activos pero cero tomas cargadas esta semana -- en ambos casos
-      // no hay forma de medir adherencia real, asi que no se reclama.
-      hay_registros_esta_semana: activeSupplementIds.length > 0 ? takenThisWeek > 0 : null,
+      // null cuando no hay suplementos activos (no aplica); false cuando hay
+      // activos pero el registro es muy escaso (menos de 3 tomas en las
+      // ultimas 2 semanas) -- en ambos casos no hay forma de medir
+      // adherencia real, asi que no se reclama.
+      hay_registros_esta_semana: activeSupplementIds.length > 0 ? takenLastTwoWeeks >= 3 : null,
       tomas_esta_semana: takenThisWeek,
       tomas_posibles: activeSupplementIds.length * 7,
     },
@@ -262,7 +277,8 @@ Reglas:
 - Entre 100 y 180 palabras, en prosa corrida (sin viñetas ni títulos).
 - Usá solo los números que te paso — no inventes datos que no están.
 - Si un dato falta (null o en cero), no lo trates como un problema de rendimiento — es que falta el registro, señalalo como tal si es relevante.
-- Recuperación y suplementos son un caso especial: si "hay_registros" (o "hay_registros_esta_semana") es false, NO lo menciones como un dato que falta — interpretalo directamente como que no hubo nada fuera de lo normal esa semana y quedate en silencio sobre eso, sin pedirle que registre más. Hablá de recuperación solo cuando "fuera_de_lo_normal" sea true (dolor, fatiga alta o energía baja), y de suplementos solo cuando sí haya registros esa semana (ahí sí comentá la adherencia real).
+- Recuperación: si "hay_registros" es false, NO lo menciones como un dato que falta — interpretalo directamente como que no hubo nada fuera de lo normal esa semana y quedate en silencio sobre eso, sin pedirle que registre más. Hablá de recuperación solo cuando "fuera_de_lo_normal" sea true (dolor, fatiga alta o energía baja).
+- Suplementos: si "hay_registros_esta_semana" es false, es porque el registro es muy escaso para medir adherencia real (no porque todo esté "normal") — quedate en silencio sobre el tema, sin reclamarle que registre más ni inventar una lectura de adherencia. Hablá de suplementos solo cuando "hay_registros_esta_semana" sea true (ahí sí comentá la adherencia real).
 - Los sets de entrenamiento (entrenamiento.sets_esta_semana) son solo los que se cargaron a mano — puede haber sesiones reales que no se registraron. No concluyas con certeza que entrenó poco solo por un número bajo; si lo mencionás, planteálo como posible falta de registro, no como un hecho confirmado.
 - entrenamiento.series_por_grupo_muscular son series ESTIMADAS por grupo (no una medición exacta: para ejercicios unilaterales cuenta 1 serie por registro, y para registros viejos sin ese dato se estima con las series planificadas del ejercicio). La referencia general es 10-20 series semanales por grupo. Usalo como guía aproximada, no concluyas con certeza absoluta sobre un grupo puntual a partir de este número.
 - Cerrá siempre con UNA sola prioridad concreta para la semana que arranca, en una frase.
