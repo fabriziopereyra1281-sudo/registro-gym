@@ -257,6 +257,9 @@ function mapCheckinRow(row) {
     soreness: row.soreness,
     pain: row.pain || {},
     notes: row.notes,
+    // Kcal activas del dia segun el Apple Watch -- las carga sola un Atajo
+    // de iOS contra /api/watch-import (ver MasTab), no se editan a mano.
+    activeCalories: row.active_calories ?? null,
   };
 }
 function mapTargetsRow(row) {
@@ -1271,6 +1274,9 @@ export default function App() {
               photos={photos}
               setTab={setTab}
               showToast={showToast}
+              logs={logs}
+              activityLogs={activityLogs}
+              checkins={checkins}
             />
           ) : tab === "progreso" ? (
             <ProgresoTab
@@ -1300,6 +1306,8 @@ export default function App() {
               deleteSupplement={deleteSupplement}
               toggleSupplementToday={toggleSupplementToday}
               onExport={exportAllData}
+              userId={session.user.id}
+              showToast={showToast}
             />
           ) : tab === "nutricion" ? (
             <NutricionTab
@@ -1311,6 +1319,7 @@ export default function App() {
               bwLogs={bwLogs}
               logs={logs}
               activityLogs={activityLogs}
+              checkins={checkins}
               customFoods={customFoods}
               addCustomFood={addCustomFood}
               deleteCustomFood={deleteCustomFood}
@@ -1697,7 +1706,7 @@ function RestTimerBar({ seconds, setSeconds, audioCtx, onClose }) {
 function HoyTab({
   config, selectedDay, setSelectedDay, openForm, setOpenForm, lastEntryFor, bestEntryFor, addLog,
   editMode, setEditMode, updateFocus, updateNote, addExercise, updateExercise, removeExercise,
-  bwLogs, addBw, photos, setTab, showToast,
+  bwLogs, addBw, photos, setTab, showToast, logs, activityLogs, checkins,
 }) {
   const day = config[selectedDay];
 
@@ -1707,6 +1716,27 @@ function HoyTab({
   // completar una sesion que quedo sin cargar (ej. cargarla al otro dia).
   const [entryDate, setEntryDate] = useState(todayISO());
   const isEntryToday = entryDate === todayISO();
+
+  // Devolucion diaria de entrenamiento/sedentarismo (ver DailyActivityCard
+  // mas abajo): siempre sobre HOY, independiente de entryDate (que es solo
+  // para completar una sesion vieja sin cargar).
+  const exercisesById = useMemo(() => buildExercisesById(config), [config]);
+  const setsToday = useMemo(() => {
+    const todaysLogs = logs.filter((l) => l.date === todayISO());
+    return todaysLogs.reduce((s, l) => s + effectiveSetsFor(l, exercisesById), 0);
+  }, [logs, exercisesById]);
+  const activityMinutesToday = useMemo(
+    () => activityLogs.filter((a) => a.date === todayISO()).reduce((s, a) => s + (a.durationMin || 0), 0),
+    [activityLogs]
+  );
+  const activeCaloriesToday = useMemo(
+    () => checkins.find((c) => c.date === todayISO())?.activeCalories ?? null,
+    [checkins]
+  );
+  const dailyActivity = useMemo(
+    () => computeDailyActivitySummary({ setsToday, activityMinutesToday, activeCalories: activeCaloriesToday, nowHour: new Date().getHours() }),
+    [setsToday, activityMinutesToday, activeCaloriesToday]
+  );
 
   // Web Share API en celular (abre el picker nativo de apps); en desktop, o
   // si el usuario cancela el picker, no suele estar disponible -- se cae a
@@ -1767,6 +1797,8 @@ function HoyTab({
       )}
 
       <CheckInReminder bwLogs={bwLogs} addBw={addBw} photos={photos} setTab={setTab} />
+
+      <DailyActivityCard summary={dailyActivity} />
 
       <div className="chiprow">
         {DAY_ORDER.map((k) => (
@@ -2657,7 +2689,7 @@ function ExportSection({ onExport }) {
 function MasTab({
   activityLogs, addActivity, deleteActivity, checkins, saveCheckin,
   supplements, supplementLogs, addSupplement, toggleSupplementActive, deleteSupplement, toggleSupplementToday,
-  onExport,
+  onExport, userId, showToast,
 }) {
   const todaysCheckin = checkins.find((c) => c.date === todayISO()) || null;
   const recentActivities = useMemo(
@@ -2705,7 +2737,37 @@ function MasTab({
       />
 
       <ExportSection onExport={onExport} />
+
+      <WatchIntegrationCard userId={userId} showToast={showToast} />
     </div>
+  );
+}
+
+// Para que un Atajo de iOS mande las kcal activas del Apple Watch a
+// /api/watch-import, necesita saber a que usuario pertenecen -- este es el
+// identificador que hay que pegar en la URL del Atajo (junto con la clave
+// secreta que se configura en Vercel, ver WATCH_IMPORT_SECRET).
+function WatchIntegrationCard({ userId, showToast }) {
+  async function copyId() {
+    try {
+      await navigator.clipboard.writeText(userId);
+      showToast("ID copiado al portapapeles");
+    } catch {
+      showToast("No se pudo copiar el ID");
+    }
+  }
+
+  return (
+    <section className="card">
+      <div className="section-title">Apple Watch (kcal activas)</div>
+      <div className="section-sub">
+        Para traer tus kcal activas del día automáticamente con un Atajo de iOS, necesitás tu ID de usuario abajo — pegalo en la URL del Atajo junto con la clave secreta que configuraste en Vercel (WATCH_IMPORT_SECRET).
+      </div>
+      <div className="edit-row" style={{ marginTop: 8 }}>
+        <input className="input mono" value={userId} readOnly style={{ fontSize: 11.5 }} />
+        <button className="edit-toggle" onClick={copyId}>Copiar</button>
+      </div>
+    </section>
   );
 }
 
@@ -3201,7 +3263,7 @@ function CompletarMiDiaCard({ targets, totals, addMeal, dateISO }) {
   );
 }
 
-function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwLogs, logs, activityLogs, customFoods, addCustomFood, deleteCustomFood }) {
+function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwLogs, logs, activityLogs, checkins, customFoods, addCustomFood, deleteCustomFood }) {
   // Que dia se esta viendo/cargando: por defecto hoy, pero se puede mover a
   // cualquier dia anterior (ej. para cargar una cena de madrugada que quedo
   // sin registrar, o completar comidas de ayer). Nunca se permite ir a futuro.
@@ -3275,6 +3337,15 @@ function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwL
     [totals, effectiveTargets, isToday]
   );
 
+  // Kcal activas del dia elegido, si el Apple Watch ya la mando (ver
+  // mapCheckinRow / api/watch-import.js) -- null si todavia no llego ese
+  // dato para esa fecha, en cuyo caso la barra ni se muestra.
+  const activeCalories = useMemo(
+    () => checkins.find((c) => c.date === selectedDate)?.activeCalories ?? null,
+    [checkins, selectedDate]
+  );
+  const activeCalTarget = ACTIVE_CAL_TARGET_BY_LEVEL[targets?.activityLevel] || ACTIVE_CAL_TARGET_BY_LEVEL.moderada;
+
   return (
     <div className="tabpane">
       <TargetsCard targets={targets} onSave={saveTargets} latestWeight={latestWeight} />
@@ -3309,10 +3380,13 @@ function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwL
         {effectiveTargets ? (
           <>
             <div className="cardlist">
-              <MacroBar label="Kcal" value={totals.calories} target={effectiveTargets.calories} unit="" colorClass="bar-accent" />
-              <MacroBar label="Prot" value={totals.protein} target={effectiveTargets.protein} unit="g" colorClass="bar-accent2" />
-              <MacroBar label="Carb" value={totals.carbs} target={effectiveTargets.carbs} unit="g" colorClass="bar-accent" />
-              <MacroBar label="Gras" value={totals.fat} target={effectiveTargets.fat} unit="g" colorClass="bar-accent2" />
+              <MacroBar label="Kcal" value={totals.calories} target={effectiveTargets.calories} unit="" />
+              <MacroBar label="Prot" value={totals.protein} target={effectiveTargets.protein} unit="g" />
+              <MacroBar label="Carb" value={totals.carbs} target={effectiveTargets.carbs} unit="g" />
+              <MacroBar label="Gras" value={totals.fat} target={effectiveTargets.fat} unit="g" />
+              {activeCalories != null && (
+                <MacroBar label="Act" value={activeCalories} target={activeCalTarget} unit="" />
+              )}
             </div>
             {daySummary && (
               <div className={"hist-detail" + (daySummary.alert ? " accent2" : "") + " mono"} style={{ marginTop: 8 }}>
@@ -3599,6 +3673,40 @@ function computeActivityKcal(activity, weightKg) {
 // hora no se toca el objetivo solo porque no entrenaste a la mañana.
 const UNTRAINED_DAY_CUTOFF_HOUR = 20;
 
+// Devolucion diaria de entrenamiento/sedentarismo (sin IA, ver
+// DailyActivityCard en HoyTab): pensada para alguien con trabajo de
+// escritorio, donde el gimnasio y la caminata son practicamente todo el
+// movimiento del dia. No alarma temprano (todavia puede entrenar mas
+// tarde) -- solo marca "dia sedentario" cuando ya paso la hora de corte y
+// no hay nada cargado.
+function computeDailyActivitySummary({ setsToday, activityMinutesToday, activeCalories, nowHour, cutoffHour = UNTRAINED_DAY_CUTOFF_HOUR }) {
+  const trained = setsToday > 0;
+  const movedExtra = activityMinutesToday > 0;
+  if (trained) {
+    return {
+      tone: "ok",
+      text: `Entrenaste hoy (${setsToday} serie${setsToday === 1 ? "" : "s"} cargada${setsToday === 1 ? "" : "s"}). Con el trabajo sentado, sumá alguna pausa para pararte durante el día si podés.`,
+    };
+  }
+  if (movedExtra) {
+    return { tone: "ok", text: `No entrenaste en el gimnasio hoy, pero registraste ${activityMinutesToday} min de actividad extra. Bien ahí.` };
+  }
+  if (nowHour >= cutoffHour) {
+    const calTxt = activeCalories != null ? ` (tu reloj marca ${activeCalories} kcal activas)` : "";
+    return { tone: "warn", text: `Hoy no entrenaste ni registraste actividad${calTxt} — con el trabajo sentado, es un día bastante sedentario. Si podés, una caminata corta suma.` };
+  }
+  return { tone: "info", text: "Todavía no registraste entrenamiento ni actividad hoy — queda tiempo en el día." };
+}
+
+function DailyActivityCard({ summary }) {
+  return (
+    <section className={"card decision-card tone-" + summary.tone}>
+      <div className="section-title" style={{ marginBottom: 6 }}>Hoy: actividad y sedentarismo</div>
+      <div className="decision-text">{summary.text}</div>
+    </section>
+  );
+}
+
 // Ajusta el objetivo base del dia (el que se guarda fijo en "Objetivos
 // diarios") segun el tipo de dia: en descanso (programado o porque el dia
 // de entreno paso sin nada cargado) baja un poco los carbohidratos (la
@@ -3627,14 +3735,29 @@ function computeEffectiveTargets(targets, { isRestDay, skippedTrainingDay, activ
   return { ...targets, carbs, calories, adjustmentNotes: notes };
 }
 
-function MacroBar({ label, value, target, unit, colorClass }) {
+// Zona de color de una barra de nutricion segun cuanto del objetivo cubre:
+// por debajo (<85%, todavia te falta), en zona (85-110%, en el objetivo) o
+// pasado (>110%, te excediste) -- mismo lenguaje visual que ya usa el panel
+// de "Series por grupo muscular" en Coach. Redondeado a 1 decimal para que
+// el ruido de punto flotante (110/100*100 = 110.00000000000001) no empuje
+// un valor justo en el limite al lado equivocado.
+function macroBarStatus(value, target) {
+  if (!target || target <= 0) return null;
+  const pct = Math.round(((value / target) * 100) * 10) / 10;
+  if (pct < 85) return "below";
+  if (pct <= 110) return "target";
+  return "over";
+}
+
+function MacroBar({ label, value, target, unit }) {
   const hasTarget = target && target > 0;
   const pct = hasTarget ? Math.min(100, (value / target) * 100) : 0;
+  const status = macroBarStatus(value, target);
   return (
     <div className="bar-row">
       <span className="bar-label mono">{label}</span>
       <div className="bar-track">
-        {hasTarget && <div className={"bar-fill " + colorClass} style={{ width: `${pct}%` }} />}
+        {hasTarget && <div className={"bar-fill macro-bar-" + status} style={{ width: `${pct}%` }} />}
       </div>
       <span
         className="bar-value mono"
@@ -3661,6 +3784,17 @@ const ACTIVITY_LEVEL_LABELS = {
   liviana: "Actividad liviana (camino bastante, de pie seguido)",
   moderada: "Actividad moderada (entreno 4-5x/semana)",
   intensa: "Actividad intensa (entreno + trabajo fisico, o 6-7x/semana)",
+};
+
+// Referencia de kcal activas diarias (del Apple Watch) segun el nivel de
+// actividad ya elegido en "Objetivos diarios" -- no es un objetivo que el
+// usuario configure aparte, solo le da color a la barra de "Calorías
+// activas" en vez de mostrarla siempre gris por falta de referencia.
+const ACTIVE_CAL_TARGET_BY_LEVEL = {
+  sedentario: 300,
+  liviana: 400,
+  moderada: 500,
+  intensa: 650,
 };
 
 // BMR (gasto en reposo) por la formula de Mifflin-St Jeor -- la mas precisa
@@ -4805,6 +4939,9 @@ const CSS = `
 .bar-fill { height: 100%; border-radius: 7px; transition: width 0.3s; }
 .bar-accent { background: #C08A3E; }
 .bar-accent2 { background: #0092B0; }
+.macro-bar-below { background: #5C6470; }
+.macro-bar-target { background: #6E9B8B; }
+.macro-bar-over { background: #C0673A; }
 .bar-value { width: 52px; text-align: right; font-size: 11.5px; color: #EDEAE3; }
 .gap-label { font-size: 11.5px; color: #8B93A0; margin-top: 2px; }
 
