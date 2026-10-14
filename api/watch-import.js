@@ -44,7 +44,14 @@ export default async function handler(req, res) {
     res.status(400).send("Falta user_id.");
     return;
   }
-  const kcal = Number(req.query?.kcal);
+  if (req.query?.kcal == null || req.query.kcal === "") {
+    res.status(400).send("Falta kcal.");
+    return;
+  }
+  // El Atajo de iOS suele mandar el numero con coma decimal si el telefono
+  // esta en español (ej. "320,5" en vez de "320.5") -- lo normalizamos antes
+  // de parsear para no depender de la configuracion regional del telefono.
+  const kcal = Number(String(req.query.kcal).replace(",", "."));
   if (!Number.isFinite(kcal) || kcal < 0) {
     res.status(400).send("kcal invalido (tiene que ser un numero >= 0).");
     return;
