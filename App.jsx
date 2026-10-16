@@ -3545,6 +3545,14 @@ function MealEditRow({ meal, onCancel, onSave }) {
     setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)));
   }
   function removeItem(id) {
+    // No se permite dejar la comida sin items: "Guardar" no hace nada con 0
+    // items (ver submit), asi que sin este freno el ultimo item desaparecia
+    // de la pantalla pero el guardado quedaba en silencio sin aplicar el
+    // cambio -- las barras de arriba seguian con los macros viejos.
+    if (items.length <= 1) {
+      window.alert("No podés dejar la comida sin alimentos. Para borrarla del todo, cancelá la edición y usá el tacho de la comida completa.");
+      return;
+    }
     setItems((prev) => prev.filter((it) => it.id !== id));
   }
   function addNewItem() {
