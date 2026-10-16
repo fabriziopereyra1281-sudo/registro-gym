@@ -3446,7 +3446,7 @@ function NutricionTab({ targets, saveTargets, mealLogs, addMeal, updateMeal, del
               <MacroBar label="Carb" value={totals.carbs} target={effectiveTargets.carbs} unit="g" />
               <MacroBar label="Gras" value={totals.fat} target={effectiveTargets.fat} unit="g" />
               {activeCalories != null && (
-                <MacroBar label="Act" value={activeCalories} target={activeCalTarget} unit="" />
+                <MacroBar label="Act" value={activeCalories} target={activeCalTarget} unit="" higherIsBetter />
               )}
             </div>
             {daySummary && (
@@ -4087,18 +4087,21 @@ function computeEffectiveTargets(targets, { isRestDay, skippedTrainingDay, activ
 // de "Series por grupo muscular" en Coach. Redondeado a 1 decimal para que
 // el ruido de punto flotante (110/100*100 = 110.00000000000001) no empuje
 // un valor justo en el limite al lado equivocado.
-function macroBarStatus(value, target) {
+// higherIsBetter: para kcal/proteina/carbos/grasas pasarse del objetivo es
+// la alarma (naranja). Para kcal activas (Act) es al reves -- mas actividad
+// nunca es malo, asi que ahi "pasado" sigue siendo verde, no una alarma.
+function macroBarStatus(value, target, { higherIsBetter = false } = {}) {
   if (!target || target <= 0) return null;
   const pct = Math.round(((value / target) * 100) * 10) / 10;
   if (pct < 85) return "below";
-  if (pct <= 110) return "target";
+  if (higherIsBetter || pct <= 110) return "target";
   return "over";
 }
 
-function MacroBar({ label, value, target, unit }) {
+function MacroBar({ label, value, target, unit, higherIsBetter = false }) {
   const hasTarget = target && target > 0;
   const pct = hasTarget ? Math.min(100, (value / target) * 100) : 0;
-  const status = macroBarStatus(value, target);
+  const status = macroBarStatus(value, target, { higherIsBetter });
   return (
     <div className="bar-row">
       <span className="bar-label mono">{label}</span>
