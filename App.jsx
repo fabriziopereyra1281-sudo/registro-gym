@@ -3302,9 +3302,12 @@ function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwL
   }, [selectedMeals]);
 
   const isRestDay = useMemo(() => !DAY_KEY_BY_WEEKDAY[weekdayOfISO(selectedDate)], [selectedDate]);
+  // Las pesas no suman a activityKcal: el objetivo base ya contempla el
+  // entreno de ese dia, así que solo actividad extra (cardio, boxeo,
+  // caminata) debe sumar kcal/carbos de bonus.
   const activityKcal = useMemo(() => {
     return activityLogs
-      .filter((a) => a.date === selectedDate)
+      .filter((a) => a.date === selectedDate && !isWeightTrainingActivity(a.name))
       .reduce((sum, a) => sum + computeActivityKcal(a, latestWeight), 0);
   }, [activityLogs, latestWeight, selectedDate]);
 
@@ -3314,9 +3317,11 @@ function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwL
   // descanso, solo que lo "decide" la ausencia de registros en vez del
   // calendario. Para hoy, solo despues de cierta hora (no se castiga el
   // objetivo a la mañana solo porque todavia no entrenaste).
+  // No se compara l.day contra el dia programado: a veces la rutina se
+  // corre desfasada (ej. la de "lun" cargada un martes), y eso sigue
+  // contando como entrenado ese dia.
   const trainedThatDay = useMemo(() => {
-    const dayKey = DAY_KEY_BY_WEEKDAY[weekdayOfISO(selectedDate)];
-    return logs.some((l) => l.date === selectedDate && (!dayKey || l.day === dayKey));
+    return logs.some((l) => l.date === selectedDate);
   }, [logs, selectedDate]);
   const skippedTrainingDay = useMemo(() => {
     if (isRestDay || trainedThatDay || activityKcal > 0) return false;
@@ -3649,6 +3654,14 @@ function computeDaySummary({ totals, targets, isToday, nowHour }) {
   else if (isToday && nowHour >= 18 && pctProtein != null && pctProtein < 50) alert = `vas atrasado con la proteína (${pctProtein}%)`;
 
   return { pctKcal, pctProtein, alert };
+}
+
+// Si el nombre de la actividad cargada en "Otra actividad" es en realidad
+// la sesion de pesas (ej. alguien tipeo "Pesas" en vez de usar el campo de
+// nombre libre para cardio/boxeo), no debe sumar kcal extra: el objetivo
+// base ya contempla el entreno de pesas de ese dia.
+function isWeightTrainingActivity(name) {
+  return normalizeText(name).includes("pesa");
 }
 
 // Estimacion gratuita de gasto energetico de una actividad, por METs segun
