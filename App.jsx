@@ -313,6 +313,11 @@ function mapMealRow(row) {
     carbs: row.carbs,
     fat: row.fat,
     notes: row.notes,
+    // Items estructurados (alimento/cantidad) de esta comida, si se cargo
+    // desde el selector de la base en vez de "Cargar manual" -- permite
+    // reeditar cantidad por cantidad en vez de solo los macros totales (ver
+    // MealEditRow). Comidas viejas no tienen esta columna cargada (null).
+    items: row.items || null,
   };
 }
 // Mismo formato que un alimento de FOOD_DB (siempre por 100g, "unit" fijo en
@@ -410,6 +415,18 @@ function computeFoodMacros(foodId, qty, { asGrams = false } = {}) {
     carbs: Number((food.carbs * factor).toFixed(1)),
     fat: Number((food.fat * factor).toFixed(1)),
   };
+}
+
+// Guarda contra un error de tipeo en el selector "Por porción": cargar sin
+// querer una cantidad enorme de porciones (ej. "30" pensando en gramos) en
+// vez de usar "Lo pesé (gramos)". Antes de agregar algo asi, confirma
+// mostrando el total real en gramos. No aplica en modo "Lo pesé" (ya son
+// gramos) ni a alimentos sin porcion de referencia (gramsPerUnit).
+function confirmLargePortionQty(qty, food, byGrams) {
+  if (byGrams || !food?.unit || !food.gramsPerUnit || !qty || qty <= 10) return true;
+  const totalG = Math.round(qty * food.gramsPerUnit);
+  const unitWord = qty === 1 ? food.unitWord : food.unitWordPlural;
+  return window.confirm(`${fmtNum(qty)} ${unitWord} = ${totalG} g de ${food.name}. ¿Seguro?`);
 }
 
 // Un entero estable por fecha + texto, para variar la sugerencia dia a dia
@@ -883,6 +900,7 @@ export default function App() {
       carbs: entry.carbs ?? null,
       fat: entry.fat ?? null,
       notes: entry.notes || null,
+      items: entry.items ?? null,
     };
     const { data, error } = await supabase.from("meal_logs").insert(row).select().single();
     if (!error && data) {
@@ -891,6 +909,29 @@ export default function App() {
       return true;
     }
     showToast("No se pudo guardar: " + (error?.message || "error desconocido"));
+    return false;
+  }
+
+  // Edicion de una comida ya cargada (ver MealEditRow) -- mismo patron que
+  // addMeal (sin cola offline: si falla, se avisa y no se toca el estado
+  // local, para no mostrar una edicion como guardada cuando no lo esta).
+  async function updateMeal(id, patch) {
+    const row = {
+      meal_type: patch.mealType || null,
+      name: patch.name,
+      calories: patch.calories ?? null,
+      protein: patch.protein ?? null,
+      carbs: patch.carbs ?? null,
+      fat: patch.fat ?? null,
+      items: patch.items ?? null,
+    };
+    const { data, error } = await supabase.from("meal_logs").update(row).eq("id", id).select().single();
+    if (!error && data) {
+      setMealLogs((prev) => prev.map((m) => (m.id === id ? mapMealRow(data) : m)));
+      showToast("Comida actualizada");
+      return true;
+    }
+    showToast("No se pudo actualizar: " + (error?.message || "error desconocido"));
     return false;
   }
 
@@ -1315,6 +1356,7 @@ export default function App() {
               saveTargets={saveTargets}
               mealLogs={mealLogs}
               addMeal={addMeal}
+              updateMeal={updateMeal}
               deleteMeal={deleteMeal}
               bwLogs={bwLogs}
               logs={logs}
@@ -3036,6 +3078,9 @@ function ComboCard({ initialItems, mealTypeLabel, dateISO, addMeal }) {
 
   async function logCombo() {
     if (!allValid || saving) return;
+    for (const r of rows) {
+      if (!confirmLargePortionQty(r.qty, r.food, r.byGrams)) return;
+    }
     const label = rows
       .map((r) => {
         const unitWord = r.byGrams ? "g" : r.food.unit ? (r.qty === 1 ? r.food.unitWord : r.food.unitWordPlural) : "g";
@@ -3051,6 +3096,16 @@ function ComboCard({ initialItems, mealTypeLabel, dateISO, addMeal }) {
       protein: Number(totals.protein.toFixed(1)),
       carbs: Number(totals.carbs.toFixed(1)),
       fat: Number(totals.fat.toFixed(1)),
+      items: rows.map((r) => ({
+        foodId: r.food.id,
+        qty: r.qty,
+        byGrams: r.byGrams,
+        label: `${fmtNum(r.qty)} ${r.byGrams ? "g" : r.food.unit ? (r.qty === 1 ? r.food.unitWord : r.food.unitWordPlural) : "g"} de ${r.food.name}`,
+        kcal: r.macros.kcal,
+        protein: r.macros.protein,
+        carbs: r.macros.carbs,
+        fat: r.macros.fat,
+      })),
     });
     setSaving(false);
   }
@@ -3263,12 +3318,13 @@ function CompletarMiDiaCard({ targets, totals, addMeal, dateISO }) {
   );
 }
 
-function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwLogs, logs, activityLogs, checkins, customFoods, addCustomFood, deleteCustomFood }) {
+function NutricionTab({ targets, saveTargets, mealLogs, addMeal, updateMeal, deleteMeal, bwLogs, logs, activityLogs, checkins, customFoods, addCustomFood, deleteCustomFood }) {
   // Que dia se esta viendo/cargando: por defecto hoy, pero se puede mover a
   // cualquier dia anterior (ej. para cargar una cena de madrugada que quedo
   // sin registrar, o completar comidas de ayer). Nunca se permite ir a futuro.
   const [selectedDate, setSelectedDate] = useState(todayISO());
   const isToday = selectedDate === todayISO();
+  const [editingMealId, setEditingMealId] = useState(null);
 
   const latestWeight = useMemo(() => {
     const sorted = [...bwLogs].filter((b) => b.weight != null).sort((a, b) => (a.date < b.date ? 1 : -1));
@@ -3418,26 +3474,295 @@ function NutricionTab({ targets, saveTargets, mealLogs, addMeal, deleteMeal, bwL
         <section className="card">
           <div className="section-title">{isToday ? "Comidas de hoy" : `Comidas del ${fmtDateLabel(selectedDate)}`}</div>
           <div className="cardlist" style={{ marginTop: 8 }}>
-            {selectedMeals.map((m) => (
-              <div key={m.id} className="hist-row">
-                <div>
-                  <div className="hist-ex">{m.mealType ? `${m.mealType} · ` : ""}{m.name}</div>
-                  <div className="hist-detail mono">
-                    {m.calories != null ? `${fmtNum(m.calories)} kcal` : "kcal ?"}
-                    {m.protein != null ? ` · P ${fmtNum(m.protein)}g` : ""}
-                    {m.carbs != null ? ` · C ${fmtNum(m.carbs)}g` : ""}
-                    {m.fat != null ? ` · G ${fmtNum(m.fat)}g` : ""}
+            {selectedMeals.map((m) =>
+              editingMealId === m.id ? (
+                <MealEditRow
+                  key={m.id}
+                  meal={m}
+                  onCancel={() => setEditingMealId(null)}
+                  onSave={async (patch) => { const ok = await updateMeal(m.id, patch); if (ok) setEditingMealId(null); }}
+                />
+              ) : (
+                <div key={m.id} className="hist-row">
+                  <div>
+                    <div className="hist-ex">{m.mealType ? `${m.mealType} · ` : ""}{m.name}</div>
+                    <div className="hist-detail mono">
+                      {m.calories != null ? `${fmtNum(m.calories)} kcal` : "kcal ?"}
+                      {m.protein != null ? ` · P ${fmtNum(m.protein)}g` : ""}
+                      {m.carbs != null ? ` · C ${fmtNum(m.carbs)}g` : ""}
+                      {m.fat != null ? ` · G ${fmtNum(m.fat)}g` : ""}
+                    </div>
+                    {m.notes && <div className="hist-detail" style={{ marginTop: 2 }}>{m.notes}</div>}
                   </div>
-                  {m.notes && <div className="hist-detail" style={{ marginTop: 2 }}>{m.notes}</div>}
+                  <div className="hist-actions">
+                    <button className="del-btn" onClick={() => setEditingMealId(m.id)}><Pencil size={15} /></button>
+                    <button className="del-btn" onClick={() => deleteMeal(m.id)}><Trash2 size={15} /></button>
+                  </div>
+                </div>
+              )
+            )}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
+// Edicion inline de una comida ya cargada (ver NutricionTab). Dos modos:
+// - Con items (comidas cargadas desde el selector de la base, ver MealForm/
+//   ComboCard): se edita cantidad por cantidad y los macros se recalculan
+//   solos, igual que al cargarla la primera vez.
+// - Sin items (comidas viejas o cargadas a mano, antes de esta funcion): se
+//   editan directo los macros totales, como siempre se pudo hacer.
+function MealEditRow({ meal, onCancel, onSave }) {
+  const [mealType, setMealType] = useState(meal.mealType || null);
+  const hasItems = Array.isArray(meal.items) && meal.items.length > 0;
+
+  const [items, setItems] = useState(() =>
+    hasItems
+      ? meal.items.map((it) => ({
+          id: uid(),
+          foodId: it.foodId ?? null,
+          label: it.label,
+          qtyInput: toInput(it.qty),
+          byGrams: !!it.byGrams,
+          // Para items sin foodId (cargados a mano, sin alimento de base del
+          // que escalar) los macros se editan directo en vez de la cantidad.
+          kcalInput: toInput(it.kcal),
+          proteinInput: toInput(it.protein),
+          carbsInput: toInput(it.carbs),
+          fatInput: toInput(it.fat),
+        }))
+      : []
+  );
+  const [addFoodId, setAddFoodId] = useState(FOOD_DB[0].id);
+  const [addQty, setAddQty] = useState("");
+  const [addByGrams, setAddByGrams] = useState(false);
+  const addFood = FOOD_DB.find((f) => f.id === addFoodId);
+  const canAddByGrams = addFood.unit && addFood.gramsPerUnit != null;
+
+  function patchItem(id, patch) {
+    setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)));
+  }
+  function removeItem(id) {
+    setItems((prev) => prev.filter((it) => it.id !== id));
+  }
+  function addNewItem() {
+    const qty = toNum(addQty);
+    const byGrams = canAddByGrams && addByGrams;
+    const m = computeFoodMacros(addFoodId, qty, { asGrams: byGrams });
+    if (!m) return;
+    if (!confirmLargePortionQty(qty, addFood, byGrams)) return;
+    setItems((prev) => [
+      ...prev,
+      {
+        id: uid(),
+        foodId: addFoodId,
+        label: addFood.name,
+        qtyInput: toInput(qty),
+        byGrams,
+        kcalInput: toInput(m.kcal),
+        proteinInput: toInput(m.protein),
+        carbsInput: toInput(m.carbs),
+        fatInput: toInput(m.fat),
+      },
+    ]);
+    setAddQty("");
+  }
+
+  // Filas con macros recalculados en vivo: para items con foodId, a partir
+  // de la cantidad editada; para items sin foodId, los valores tipeados.
+  const rows = items.map((it) => {
+    if (it.foodId) {
+      const food = FOOD_DB.find((f) => f.id === it.foodId);
+      const qty = toNum(it.qtyInput);
+      const macros = food ? computeFoodMacros(it.foodId, qty, { asGrams: it.byGrams }) : null;
+      const label = food && qty
+        ? it.byGrams
+          ? `${fmtNum(qty)} g de ${food.name}`
+          : food.unit
+          ? `${fmtNum(qty)} ${qty === 1 ? food.unitWord : food.unitWordPlural} de ${food.name}`
+          : `${fmtNum(qty)} g de ${food.name}`
+        : it.label;
+      return { ...it, food, qty, label, macros };
+    }
+    const macros = {
+      kcal: toNum(it.kcalInput) || 0,
+      protein: toNum(it.proteinInput) || 0,
+      carbs: toNum(it.carbsInput) || 0,
+      fat: toNum(it.fatInput) || 0,
+    };
+    return { ...it, food: null, qty: null, macros };
+  });
+
+  const totals = rows.reduce(
+    (acc, r) =>
+      r.macros
+        ? { kcal: acc.kcal + r.macros.kcal, protein: acc.protein + r.macros.protein, carbs: acc.carbs + r.macros.carbs, fat: acc.fat + r.macros.fat }
+        : acc,
+    { kcal: 0, protein: 0, carbs: 0, fat: 0 }
+  );
+
+  // Modo sin items (comidas viejas): se edita directo.
+  const [name, setName] = useState(meal.name || "");
+  const [calories, setCalories] = useState(toInput(meal.calories));
+  const [protein, setProtein] = useState(toInput(meal.protein));
+  const [carbs, setCarbs] = useState(toInput(meal.carbs));
+  const [fat, setFat] = useState(toInput(meal.fat));
+
+  const [saving, setSaving] = useState(false);
+
+  async function submit() {
+    if (saving) return;
+    if (hasItems) {
+      if (rows.length === 0 || rows.some((r) => r.macros == null)) return;
+      for (const r of rows) {
+        if (r.food && !confirmLargePortionQty(r.qty, r.food, r.byGrams)) return;
+      }
+      setSaving(true);
+      await onSave({
+        mealType,
+        name: rows.map((r) => r.label).join(", "),
+        calories: Math.round(totals.kcal),
+        protein: Number(totals.protein.toFixed(1)),
+        carbs: Number(totals.carbs.toFixed(1)),
+        fat: Number(totals.fat.toFixed(1)),
+        items: rows.map((r) => ({
+          foodId: r.foodId ?? null,
+          qty: r.qty,
+          byGrams: r.byGrams ?? null,
+          label: r.label,
+          kcal: r.macros.kcal,
+          protein: r.macros.protein,
+          carbs: r.macros.carbs,
+          fat: r.macros.fat,
+        })),
+      });
+      setSaving(false);
+      return;
+    }
+    if (!name.trim()) return;
+    setSaving(true);
+    await onSave({
+      mealType,
+      name: name.trim(),
+      calories: toNum(calories),
+      protein: toNum(protein),
+      carbs: toNum(carbs),
+      fat: toNum(fat),
+      items: null,
+    });
+    setSaving(false);
+  }
+
+  return (
+    <div className="card">
+      <div className="chiprow wrap" style={{ marginBottom: 10 }}>
+        {MEAL_TYPES.map((t) => (
+          <button key={t} className={"chip" + (mealType === t ? " chip-active" : "")} onClick={() => setMealType(t)}>{t}</button>
+        ))}
+      </div>
+
+      {hasItems ? (
+        <>
+          <div className="cardlist">
+            {rows.map((r) => (
+              <div key={r.id} className="hist-row">
+                <div style={{ flex: 1 }}>
+                  {r.food ? (
+                    <>
+                      <div className="hist-ex">{r.food.name}</div>
+                      <div className="side-grid two" style={{ marginTop: 6, alignItems: "center" }}>
+                        <NumInput
+                          placeholder={r.byGrams ? "Gramos" : r.food.unit ? `Cant. (${r.food.unitWordPlural})` : "Gramos"}
+                          value={r.qtyInput}
+                          onChange={(v) => patchItem(r.id, { qtyInput: v })}
+                        />
+                        <span className="hist-detail mono">{r.macros ? `${r.macros.kcal} kcal` : "—"}</span>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="hist-ex">{r.label}</div>
+                      <div className="side-grid two" style={{ marginTop: 6 }}>
+                        <NumInput placeholder="Calorías" decimal={false} value={r.kcalInput} onChange={(v) => patchItem(r.id, { kcalInput: v })} />
+                        <NumInput placeholder="Proteína (g)" value={r.proteinInput} onChange={(v) => patchItem(r.id, { proteinInput: v })} />
+                      </div>
+                      <div className="side-grid two" style={{ marginTop: 6 }}>
+                        <NumInput placeholder="Carbohidratos (g)" value={r.carbsInput} onChange={(v) => patchItem(r.id, { carbsInput: v })} />
+                        <NumInput placeholder="Grasas (g)" value={r.fatInput} onChange={(v) => patchItem(r.id, { fatInput: v })} />
+                      </div>
+                    </>
+                  )}
                 </div>
                 <div className="hist-actions">
-                  <button className="del-btn" onClick={() => deleteMeal(m.id)}><Trash2 size={15} /></button>
+                  <button className="del-btn" onClick={() => removeItem(r.id)}><Trash2 size={15} /></button>
                 </div>
               </div>
             ))}
           </div>
-        </section>
+
+          <div className="card-form" style={{ marginTop: 10 }}>
+            <div className="section-sub" style={{ marginBottom: 4 }}>Agregar otro alimento</div>
+            <div className="side-grid two">
+              <div className="select-wrap">
+                <select className="select" value={addFoodId} onChange={(e) => { setAddFoodId(e.target.value); setAddByGrams(false); setAddQty(""); }}>
+                  {FOOD_CATEGORIES.map((cat) => (
+                    <optgroup key={cat} label={cat}>
+                      {FOOD_DB.filter((f) => f.cat === cat).map((f) => (
+                        <option key={f.id} value={f.id}>{f.name}</option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+                <ChevronDown size={16} className="select-chevron" />
+              </div>
+              <NumInput
+                placeholder={canAddByGrams && addByGrams ? "Gramos pesados" : addFood.unit ? `Cant. (${addFood.unitWordPlural})` : "Gramos"}
+                value={addQty}
+                onChange={setAddQty}
+              />
+            </div>
+            {canAddByGrams && (
+              <div className="chiprow" style={{ marginTop: 8 }}>
+                <button className={"chip" + (!addByGrams ? " chip-active" : "")} onClick={() => { setAddByGrams(false); setAddQty(""); }}>
+                  Por porción
+                </button>
+                <button className={"chip" + (addByGrams ? " chip-active" : "")} onClick={() => { setAddByGrams(true); setAddQty(""); }}>
+                  Lo pesé (gramos)
+                </button>
+              </div>
+            )}
+            <button className="save-btn" style={{ marginTop: 10, background: "rgba(192,138,62,0.16)", color: "#C08A3E" }} onClick={addNewItem}>
+              + Agregar a la comida
+            </button>
+          </div>
+
+          <div className="delta-row" style={{ marginTop: 10 }}>
+            <span className="mono">Total {Math.round(totals.kcal)} kcal</span>
+            <span className="mono">P {fmtNum(Number(totals.protein.toFixed(1)))}g</span>
+            <span className="mono">C {fmtNum(Number(totals.carbs.toFixed(1)))}g</span>
+            <span className="mono">G {fmtNum(Number(totals.fat.toFixed(1)))}g</span>
+          </div>
+        </>
+      ) : (
+        <div className="card-form">
+          <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Nombre de la comida" />
+          <div className="side-grid two">
+            <NumInput placeholder="Calorías (kcal)" decimal={false} value={calories} onChange={setCalories} />
+            <NumInput placeholder="Proteína (g)" value={protein} onChange={setProtein} />
+          </div>
+          <div className="side-grid two">
+            <NumInput placeholder="Carbohidratos (g)" value={carbs} onChange={setCarbs} />
+            <NumInput placeholder="Grasas (g)" value={fat} onChange={setFat} />
+          </div>
+        </div>
       )}
+
+      <div className="edit-actions" style={{ marginTop: 12 }}>
+        <button className="cancel-btn" onClick={onCancel}>Cancelar</button>
+        <button className="save-btn" onClick={submit}>Guardar</button>
+      </div>
     </div>
   );
 }
@@ -4211,12 +4536,13 @@ function MealForm({ onSave, date, isToday, customFoods, addCustomFood, deleteCus
     const qty = toNum(pickQty);
     const m = computeFoodMacros(pickFoodId, qty, { asGrams: pickingByGrams });
     if (!m) return;
+    if (!confirmLargePortionQty(qty, pickedFood, pickingByGrams)) return;
     const label = pickingByGrams
       ? `${fmtNum(qty)} g de ${pickedFood.name}`
       : pickedFood.unit
       ? `${fmtNum(qty)} ${qty === 1 ? pickedFood.unitWord : pickedFood.unitWordPlural} de ${pickedFood.name}`
       : `${fmtNum(qty)} g de ${pickedFood.name}`;
-    setItems((prev) => [...prev, { id: uid(), label, ...m }]);
+    setItems((prev) => [...prev, { id: uid(), foodId: pickFoodId, qty, byGrams: pickingByGrams, label, ...m }]);
     setPickQty("");
   }
 
@@ -4277,6 +4603,16 @@ function MealForm({ onSave, date, isToday, customFoods, addCustomFood, deleteCus
       carbs: Number(totals.carbs.toFixed(1)),
       fat: Number(totals.fat.toFixed(1)),
       notes: notes.trim(),
+      items: items.map((it) => ({
+        foodId: it.foodId ?? null,
+        qty: it.qty ?? null,
+        byGrams: it.byGrams ?? null,
+        label: it.label,
+        kcal: it.kcal,
+        protein: it.protein,
+        carbs: it.carbs,
+        fat: it.fat,
+      })),
     });
     setSaving(false);
     // Solo limpiamos el formulario si realmente se guardo — si fallo, dejamos
