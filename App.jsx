@@ -1945,14 +1945,34 @@ function HoyTab({
 }
 
 function ExerciseCard({ exercise, day, entryDate, last, best, isOpen, onToggle, onSave, restDuration, setRestDuration, onRestStart }) {
-  const [weight, setWeight] = useState("");
-  const [reps, setReps] = useState("");
-  const [weightR, setWeightR] = useState("");
-  const [repsR, setRepsR] = useState("");
-  const [weightL, setWeightL] = useState("");
-  const [repsL, setRepsL] = useState("");
+  const [weight, setWeight] = useState(toInput(last?.weight));
+  const [reps, setReps] = useState(toInput(last?.reps));
+  const [weightR, setWeightR] = useState(toInput(last?.weightR));
+  const [repsR, setRepsR] = useState(toInput(last?.repsR));
+  const [weightL, setWeightL] = useState(toInput(last?.weightL));
+  const [repsL, setRepsL] = useState(toInput(last?.repsL));
   const [rir, setRir] = useState("");
   const [setsDone, setSetsDone] = useState(plannedSetsFor(exercise));
+
+  // Al abrir la tarjeta, precarga peso/reps con el ultimo registro -- la
+  // mayoria de las veces se repite el mismo peso de maquina de la vez
+  // pasada, asi que alcanza con tocar "Guardar set" en vez de tipearlo de
+  // cero (y de paso, no hay que acordarse de memoria que pesaje usabas).
+  // RIR no se precarga: es subjetivo de cada sesion, no tiene sentido
+  // arrastrarlo. Se dispara con cada apertura (no solo la primera) para
+  // reflejar el ultimo valor actualizado, no una foto vieja del primer
+  // render.
+  useEffect(() => {
+    if (!isOpen) return;
+    setWeight(toInput(last?.weight));
+    setReps(toInput(last?.reps));
+    setWeightR(toInput(last?.weightR));
+    setRepsR(toInput(last?.repsR));
+    setWeightL(toInput(last?.weightL));
+    setRepsL(toInput(last?.repsL));
+    setSetsDone(plannedSetsFor(exercise));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
   const target = targetText(exercise);
 
