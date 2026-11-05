@@ -232,6 +232,10 @@ function mapLogRow(row) {
     repsL: row.reps_l,
     rir: row.rir,
     sets: row.sets ?? 1,
+    // Para ordenar varios sets del mismo ejercicio/dia en el orden real en
+    // que se hicieron (ver ExerciseCard) -- la fecha sola no alcanza para
+    // distinguir la serie 1 de la serie 3 del mismo dia.
+    createdAt: row.created_at,
   };
 }
 function mapBwRow(row) {
@@ -646,7 +650,8 @@ export default function App() {
       await supabase.from("configs").insert({ user_id: userId, config: cfg });
     }
     const { data: logRows } = await supabase
-      .from("workout_logs").select("*").eq("user_id", userId).order("date", { ascending: true });
+      .from("workout_logs").select("*").eq("user_id", userId)
+      .order("date", { ascending: true }).order("created_at", { ascending: true });
     const { data: bwRows } = await supabase
       .from("bodyweight_logs").select("*").eq("user_id", userId).order("date", { ascending: true });
     const { data: activityRows } = await supabase
@@ -1196,7 +1201,16 @@ export default function App() {
   }
 
   function lastEntryFor(exerciseId) {
-    const matches = logs.filter((l) => l.exerciseId === exerciseId).sort((a, b) => (a.date < b.date ? 1 : -1));
+    // Desempate por createdAt: con el modelo de "una fila por serie", puede
+    // haber varias filas del mismo ejercicio en la misma fecha (la serie 1,
+    // 2, 3...) -- la fecha sola no alcanza para saber cual fue la ultima.
+    const matches = logs
+      .filter((l) => l.exerciseId === exerciseId)
+      .sort((a, b) => {
+        if (a.date !== b.date) return a.date < b.date ? 1 : -1;
+        const ca = a.createdAt || "", cb = b.createdAt || "";
+        return ca < cb ? 1 : ca > cb ? -1 : 0;
+      });
     return matches[0] || null;
   }
 
@@ -1316,6 +1330,7 @@ export default function App() {
               setTab={setTab}
               showToast={showToast}
               logs={logs}
+              deleteLog={deleteLog}
               activityLogs={activityLogs}
               checkins={checkins}
             />
@@ -1748,7 +1763,7 @@ function RestTimerBar({ seconds, setSeconds, audioCtx, onClose }) {
 function HoyTab({
   config, selectedDay, setSelectedDay, openForm, setOpenForm, lastEntryFor, bestEntryFor, addLog,
   editMode, setEditMode, updateFocus, updateNote, addExercise, updateExercise, removeExercise,
-  bwLogs, addBw, photos, setTab, showToast, logs, activityLogs, checkins,
+  bwLogs, addBw, photos, setTab, showToast, logs, deleteLog, activityLogs, checkins,
 }) {
   const day = config[selectedDay];
 
@@ -1758,6 +1773,16 @@ function HoyTab({
   // completar una sesion que quedo sin cargar (ej. cargarla al otro dia).
   const [entryDate, setEntryDate] = useState(todayISO());
   const isEntryToday = entryDate === todayISO();
+
+  // Series ya cargadas para este ejercicio en entryDate (una fila por
+  // serie, ver ExerciseCard), en el orden real en que se guardaron -- para
+  // mostrar la lista de "series de hoy" y precargar la siguiente con los
+  // valores de la ultima.
+  function setsLoggedFor(exerciseId) {
+    return logs
+      .filter((l) => l.exerciseId === exerciseId && l.date === entryDate)
+      .sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""));
+  }
 
   // Devolucion diaria de entrenamiento/sedentarismo (ver DailyActivityCard
   // mas abajo): siempre sobre HOY, independiente de entryDate (que es solo
@@ -1929,9 +1954,11 @@ function HoyTab({
             day.exercises.map((ex) => (
               <ExerciseCard
                 key={ex.id} exercise={ex} day={selectedDay} entryDate={entryDate} last={lastEntryFor(ex.id)} best={bestEntryFor(ex.id)}
+                todaysSets={setsLoggedFor(ex.id)}
+                onDeleteSet={deleteLog}
                 isOpen={openForm === ex.id}
                 onToggle={() => setOpenForm(openForm === ex.id ? null : ex.id)}
-                onSave={(entry) => { addLog(entry); setOpenForm(null); }}
+                onSave={addLog}
                 restDuration={restDuration}
                 setRestDuration={setRestDuration}
                 onRestStart={startRestTimer}
@@ -1944,33 +1971,42 @@ function HoyTab({
   );
 }
 
-function ExerciseCard({ exercise, day, entryDate, last, best, isOpen, onToggle, onSave, restDuration, setRestDuration, onRestStart }) {
-  const [weight, setWeight] = useState(toInput(last?.weight));
-  const [reps, setReps] = useState(toInput(last?.reps));
-  const [weightR, setWeightR] = useState(toInput(last?.weightR));
-  const [repsR, setRepsR] = useState(toInput(last?.repsR));
-  const [weightL, setWeightL] = useState(toInput(last?.weightL));
-  const [repsL, setRepsL] = useState(toInput(last?.repsL));
-  const [rir, setRir] = useState("");
-  const [setsDone, setSetsDone] = useState(plannedSetsFor(exercise));
+// Fuente de donde precargar la proxima serie: si ya hay series cargadas hoy
+// para este ejercicio, la ultima de esas (sigue la progresion/el drop set en
+// curso); si no, el ultimo registro historico (otra sesion).
+function prefillSourceFor(todaysSets, last) {
+  return todaysSets.length > 0 ? todaysSets[todaysSets.length - 1] : last;
+}
 
-  // Al abrir la tarjeta, precarga peso/reps con el ultimo registro -- la
-  // mayoria de las veces se repite el mismo peso de maquina de la vez
-  // pasada, asi que alcanza con tocar "Guardar set" en vez de tipearlo de
-  // cero (y de paso, no hay que acordarse de memoria que pesaje usabas).
-  // RIR no se precarga: es subjetivo de cada sesion, no tiene sentido
-  // arrastrarlo. Se dispara con cada apertura (no solo la primera) para
-  // reflejar el ultimo valor actualizado, no una foto vieja del primer
-  // render.
+function ExerciseCard({ exercise, day, entryDate, last, best, todaysSets, onDeleteSet, isOpen, onToggle, onSave, restDuration, setRestDuration, onRestStart }) {
+  const prefillSource = prefillSourceFor(todaysSets, last);
+  const [weight, setWeight] = useState(toInput(prefillSource?.weight));
+  const [reps, setReps] = useState(toInput(prefillSource?.reps));
+  const [weightR, setWeightR] = useState(toInput(prefillSource?.weightR));
+  const [repsR, setRepsR] = useState(toInput(prefillSource?.repsR));
+  const [weightL, setWeightL] = useState(toInput(prefillSource?.weightL));
+  const [repsL, setRepsL] = useState(toInput(prefillSource?.repsL));
+  // RIR solo se precarga a partir de una serie de ESTA MISMA sesion (tiene
+  // sentido arrastrarlo mientras segui la misma serie de pesas) -- nunca
+  // desde una sesion vieja, donde es subjetivo de ese dia puntual.
+  const [rir, setRir] = useState(toInput(todaysSets.length > 0 ? todaysSets[todaysSets.length - 1]?.rir : null));
+
+  // Al abrir la tarjeta, precarga peso/reps/RIR con la ultima serie (de hoy
+  // si ya hay, si no la de la ultima sesion) -- la mayoria de las veces se
+  // repite el mismo peso de maquina, asi que alcanza con tocar "Guardar" en
+  // vez de tipearlo de cero (y no hay que acordarse de memoria el pesaje).
+  // Se dispara con cada apertura, no solo la primera, para reflejar la
+  // ultima serie recien guardada en esta misma sesion.
   useEffect(() => {
     if (!isOpen) return;
-    setWeight(toInput(last?.weight));
-    setReps(toInput(last?.reps));
-    setWeightR(toInput(last?.weightR));
-    setRepsR(toInput(last?.repsR));
-    setWeightL(toInput(last?.weightL));
-    setRepsL(toInput(last?.repsL));
-    setSetsDone(plannedSetsFor(exercise));
+    const src = prefillSourceFor(todaysSets, last);
+    setWeight(toInput(src?.weight));
+    setReps(toInput(src?.reps));
+    setWeightR(toInput(src?.weightR));
+    setRepsR(toInput(src?.repsR));
+    setWeightL(toInput(src?.weightL));
+    setRepsL(toInput(src?.repsL));
+    setRir(toInput(todaysSets.length > 0 ? todaysSets[todaysSets.length - 1]?.rir : null));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
@@ -1983,6 +2019,19 @@ function ExerciseCard({ exercise, day, entryDate, last, best, isOpen, onToggle, 
       return `Último — Der: ${fmtNum(last.weightR)}kg×${fmtNum(last.repsR)} · Izq: ${fmtNum(last.weightL)}kg×${fmtNum(last.repsL)}${rirTxt}`;
     }
     return `Último: ${fmtNum(last.weight)}kg × ${fmtNum(last.reps)} reps${rirTxt} · ${fmtShort(last.date)}`;
+  }
+
+  // Resumen de las series ya guardadas hoy para este ejercicio -- se
+  // muestra en el header aunque la tarjeta este cerrada, igual que antes
+  // mostraba "Ultimo", pero ahora prioriza el progreso de HOY si ya hay.
+  function todayLabel() {
+    if (todaysSets.length === 0) return null;
+    const n = todaysSets.length;
+    const lastSet = todaysSets[n - 1];
+    const detail = exercise.unilateral
+      ? `Der ${fmtNum(lastSet.weightR)}kg×${fmtNum(lastSet.repsR)} · Izq ${fmtNum(lastSet.weightL)}kg×${fmtNum(lastSet.repsL)}`
+      : `${fmtNum(lastSet.weight)}kg × ${fmtNum(lastSet.reps)} reps`;
+    return `${n} serie${n === 1 ? "" : "s"} hoy · última: ${detail}`;
   }
 
   // Mejor marca historica, para mostrarla siempre visible en la tarjeta (no
@@ -1998,10 +2047,27 @@ function ExerciseCard({ exercise, day, entryDate, last, best, isOpen, onToggle, 
     return best.weight != null ? `${fmtNum(best.weight)}kg` : null;
   }
 
+  // Ajusta el peso cargado ±delta (botones "Bajé"/"Subí") sin tocar el
+  // teclado -- pensado para piramidal/drop sets, donde lo unico que cambia
+  // serie a serie suele ser el peso. Si un lado no tiene valor cargado, se
+  // deja como esta (no inventa un numero de la nada).
+  function adjustWeight(delta) {
+    const bump = (v) => {
+      const n = toNum(v);
+      return n == null ? v : toInput(Math.round((n + delta) * 10) / 10);
+    };
+    if (exercise.unilateral) {
+      setWeightR(bump);
+      setWeightL(bump);
+    } else {
+      setWeight(bump);
+    }
+  }
+
   function submit() {
     // onRestStart() tiene que llamarse de forma sincronica, en la misma
-    // cadena del click de "Guardar set" (ver startRestTimer en HoyTab):
-    // es lo que permite que el beep final del timer pueda sonar pese a las
+    // cadena del click de "Guardar" (ver startRestTimer en HoyTab): es lo
+    // que permite que el beep final del timer pueda sonar pese a las
     // restricciones de autoplay de audio del navegador.
     onRestStart?.();
     const rirNum = toNum(rir);
@@ -2018,19 +2084,20 @@ function ExerciseCard({ exercise, day, entryDate, last, best, isOpen, onToggle, 
       else if (prL) prLabel = `${exercise.name} (Izq)`;
       onSave({
         date: entryDate, day, exerciseId: exercise.id, exerciseName: exercise.name, unilateral: true,
-        weightR: wR, repsR: toNum(repsR), weightL: wL, repsL: toNum(repsL), rir: rirNum, prLabel, sets: setsDone,
+        weightR: wR, repsR: toNum(repsR), weightL: wL, repsL: toNum(repsL), rir: rirNum, prLabel, sets: 1,
       });
-      setWeightR(""); setRepsR(""); setWeightL(""); setRepsL(""); setRir(""); setSetsDone(plannedSetsFor(exercise));
     } else {
       const w = toNum(weight);
       if (w == null) return;
       const isPR = w != null && (best?.weight == null || w > best.weight);
       onSave({
         date: entryDate, day, exerciseId: exercise.id, exerciseName: exercise.name, unilateral: false,
-        weight: w, reps: toNum(reps), rir: rirNum, prLabel: isPR ? exercise.name : null, sets: setsDone,
+        weight: w, reps: toNum(reps), rir: rirNum, prLabel: isPR ? exercise.name : null, sets: 1,
       });
-      setWeight(""); setReps(""); setRir(""); setSetsDone(plannedSetsFor(exercise));
     }
+    // A proposito NO se limpian los campos: la proxima serie suele ser
+    // igual o muy parecida (ver adjustWeight) -- queda lista para tocar
+    // "Guardar y cargar otra serie" de nuevo sin re-tipear nada.
   }
 
   const bestTxt = bestLabel();
@@ -2042,13 +2109,36 @@ function ExerciseCard({ exercise, day, entryDate, last, best, isOpen, onToggle, 
           <div className="ex-name">{exercise.name}</div>
           {target && <div className="target-badge mono">{target}</div>}
           {bestTxt && <div className="ex-pr mono">🏆 {bestTxt}</div>}
-          <div className="ex-last">{lastLabel()}</div>
+          <div className="ex-last">{todayLabel() || lastLabel()}</div>
         </div>
         <div className={"card-icon" + (isOpen ? " open" : "")}>{isOpen ? <X size={16} /> : <Plus size={16} />}</div>
       </button>
 
       {isOpen && (
         <div className="card-form">
+          {todaysSets.length > 0 && (
+            <div className="cardlist">
+              {todaysSets.map((s, i) => (
+                <div key={s.id} className="hist-row">
+                  <div>
+                    <div className="target-cap">Serie {i + 1}</div>
+                    <div className="hist-detail mono">
+                      {exercise.unilateral
+                        ? `Der ${fmtNum(s.weightR)}kg×${fmtNum(s.repsR)} · Izq ${fmtNum(s.weightL)}kg×${fmtNum(s.repsL)}`
+                        : `${fmtNum(s.weight)}kg × ${fmtNum(s.reps)} reps`}
+                      {s.rir != null ? ` · RIR ${s.rir}` : ""}
+                    </div>
+                  </div>
+                  <button className="del-btn" onClick={() => onDeleteSet(s.id)}><Trash2 size={15} /></button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="target-cap" style={{ marginTop: todaysSets.length > 0 ? 12 : 0 }}>
+            Serie {todaysSets.length + 1} — precargada con la anterior
+          </div>
+
           {exercise.unilateral ? (
             <div className="side-grid">
               <div className="side-col">
@@ -2069,10 +2159,13 @@ function ExerciseCard({ exercise, day, entryDate, last, best, isOpen, onToggle, 
             </div>
           )}
           <NumInput placeholder="RIR (opcional, 0-10)" decimal={false} value={rir} onChange={setRir} />
-          <div className="sets-done-row">
-            <span className="target-cap">Series hechas</span>
-            <SetsStepper value={setsDone} onChange={setSetsDone} />
+
+          <div className="chiprow" style={{ marginTop: 4 }}>
+            <button type="button" className="chip" onClick={() => adjustWeight(-2.5)}>− Bajé 2,5</button>
+            <button type="button" className="chip chip-active">Igual</button>
+            <button type="button" className="chip" onClick={() => adjustWeight(2.5)}>+ Subí 2,5</button>
           </div>
+
           {setRestDuration && (
             <div className="chiprow rest-chiprow">
               {[60, 90, 120].map((sec) => (
@@ -2087,7 +2180,8 @@ function ExerciseCard({ exercise, day, entryDate, last, best, isOpen, onToggle, 
               ))}
             </div>
           )}
-          <button className="save-btn" onClick={submit}>Guardar set</button>
+          <button className="save-btn" onClick={submit}>Guardar y cargar otra serie</button>
+          <button className="cancel-btn" style={{ flex: "0 0 auto", width: "100%" }} onClick={onToggle}>Listo con este ejercicio</button>
         </div>
       )}
     </div>
